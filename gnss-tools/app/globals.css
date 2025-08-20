@@ -1,0 +1,144 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 222.2 84% 4.9%;
+    --card: 0 0% 100%;
+    --card-foreground: 222.2 84% 4.9%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222.2 84% 4.9%;
+    --primary: 221.2 83.2% 53.3%;
+    --primary-foreground: 210 40% 98%;
+    --secondary: 210 40% 96.1%;
+    --secondary-foreground: 222.2 47.4% 11.2%;
+    --muted: 210 40% 96.1%;
+    --muted-foreground: 215.4 16.3% 46.9%;
+    --accent: 210 40% 96.1%;
+    --accent-foreground: 222.2 47.4% 11.2%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 214.3 31.8% 91.4%;
+    --input: 214.3 31.8% 91.4%;
+    --ring: 221.2 83.2% 53.3%;
+    --radius: 0.5rem;
+
+    /* 自定义颜色变量 */
+    --blue-500: #3b82f6;
+    --green-500: #22c55e;
+    --red-500: #ef4444;
+    --indigo-500: #6366f1;
+    --purple-500: #a855f7;
+    --amber-500: #f59e0b;
+  }
+
+  .dark {
+    --background: 222.2 84% 4.9%;
+    --foreground: 210 40% 98%;
+    --card: 222.2 84% 4.9%;
+    --card-foreground: 210 40% 98%;
+    --popover: 222.2 84% 4.9%;
+    --popover-foreground: 210 40% 98%;
+    --primary: 217.2 91.2% 59.8%;
+    --primary-foreground: 222.2 47.4% 11.2%;
+    --secondary: 217.2 32.6% 17.5%;
+    --secondary-foreground: 210 40% 98%;
+    --muted: 217.2 32.6% 17.5%;
+    --muted-foreground: 215 20.2% 65.1%;
+    --accent: 217.2 32.6% 17.5%;
+    --accent-foreground: 210 40% 98%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 217.2 32.6% 17.5%;
+    --input: 217.2 32.6% 17.5%;
+    --ring: 224.3 76.3% 48%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+.calendar-day {
+  @apply relative p-2 border rounded-md cursor-pointer transition-all hover:shadow-md;
+}
+
+.calendar-day.selected {
+  @apply bg-primary text-primary-foreground shadow-md;
+}
+
+.calendar-day:hover {
+  @apply bg-blue-50 dark:bg-blue-900/20;
+}
+
+.calendar-day.selected:hover {
+  @apply bg-primary/90;
+}
+
+.gnss-card {
+  @apply bg-card border border-border rounded-xl shadow-sm hover:shadow-md transition-shadow;
+}
+
+.feature-card {
+  @apply border rounded-xl p-6 hover:shadow-lg transition-all bg-card hover:border-blue-200 dark:hover:border-blue-800;
+}
+
+.converter-card {
+  @apply bg-gradient-to-br from-card to-blue-50/50 dark:from-card dark:to-blue-950/10 shadow-md;
+}
+
+/* 资源卡片的标签样式 - 修复循环依赖问题 */
+.tag-blue {
+  @apply bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-300;
+}
+
+.tag-green {
+  @apply bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-300;
+}
+
+.tag-red {
+  @apply bg-red-100 dark:bg-red-900/30 text-red-800 dark:text-red-300;
+}
+
+.tag-indigo {
+  @apply bg-indigo-100 dark:bg-indigo-900/30 text-indigo-800 dark:text-indigo-300;
+}
+
+.tag-purple {
+  @apply bg-purple-100 dark:bg-purple-900/30 text-purple-800 dark:text-purple-300;
+}
+
+.tag-amber {
+  @apply bg-amber-100 dark:bg-amber-900/30 text-amber-800 dark:text-amber-300;
+}
+
+.link-blue {
+  @apply text-blue-600 dark:text-blue-400 hover:underline;
+}
+
+.link-green {
+  @apply text-green-600 dark:text-green-400 hover:underline;
+}
+
+.link-red {
+  @apply text-red-600 dark:text-red-400 hover:underline;
+}
+
+.link-indigo {
+  @apply text-indigo-600 dark:text-indigo-400 hover:underline;
+}
+
+.link-purple {
+  @apply text-purple-600 dark:text-purple-400 hover:underline;
+}
+
+.link-amber {
+  @apply text-amber-600 dark:text-amber-400 hover:underline;
+}

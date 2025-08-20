@@ -6,7 +6,7 @@
 
 ### 如果觉得部署麻烦，目前本人已部署至https://www.cuautol.xyz/ 可访问体验
 
-<img width="2549" height="1415" alt="image" src="https://github.com/user-attachments/assets/169d9adf-d77f-462f-8b91-49d634ab8977" />
+<img width="2549" height="1415" alt="image" src="https://github.com/user-attachments/assets/e8e7d852-2834-490e-9cb6-c25e52747e2d" />
 
 
 作者邮箱：18765541687@163.com

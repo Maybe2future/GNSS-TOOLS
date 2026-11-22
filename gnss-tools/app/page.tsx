@@ -164,6 +164,26 @@ export default function Home() {
                 <Calendar className="h-4 w-4" />
                 查看 GNSS 日历
               </Link>
+              <a
+                href="https://github.com/Maybe2future/GNSS-TOOLS/releases/download/v0.2.0/GNSS-Time-Tool-0.2.0-Windows-x64.exe"
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label="下载 Windows x64 免安装版"
+                className="inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-xl glass px-6 py-3 text-sm font-semibold shadow-sm transition-all hover:shadow-md hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2"
+              >
+                <FileDown className="h-4 w-4" />
+                Windows 免安装版
+              </a>
+              <a
+                href="https://github.com/Maybe2future/GNSS-TOOLS/releases/download/v0.2.0/GNSS-Time-Tool-0.2.0-Linux-x64.AppImage"
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label="下载 Linux x64 免安装版"
+                className="inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-xl glass px-6 py-3 text-sm font-semibold shadow-sm transition-all hover:shadow-md hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2"
+              >
+                <FileDown className="h-4 w-4" />
+                Linux 免安装版
+              </a>
             </div>
 
             <motion.div

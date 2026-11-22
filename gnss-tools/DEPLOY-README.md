@@ -2,19 +2,30 @@
 
 本项目是纯前端静态站点，不需要后端或数据库。构建结果可直接部署到静态网站托管服务，并作为 PWA 安装到电脑或手机主屏幕。
 
-## Windows 无终端启动（当前电脑）
+## Windows 和 Linux 免安装桌面版
 
-在当前电脑上，可将项目根目录的 `GNSS 时间工具.lnk` 复制到桌面，之后双击即可隐藏启动本地服务并打开独立应用窗口，不会显示黑色终端。
+从 [GitHub Releases](https://github.com/Maybe2future/GNSS-TOOLS/releases/latest) 下载对应附件即可，无需安装 Node.js：
 
-- 关闭应用窗口不会自动停止后台服务；需要彻底退出时，双击 `停止 GNSS 时间工具.lnk`，或重启电脑。
-- `启动GNSS工具.vbs` 和 `停止GNSS工具.vbs` 是与快捷方式等价的直接入口。
-- `启动GNSS工具.cmd` 仅作为排障备用，使用它需要保留终端窗口。
-- 后台服务仅监听 `127.0.0.1:7100`，日志位于 `.runtime/`。
-- 这些入口包含当前电脑的绝对路径，并使用本机 Kimi 内置 Node 运行时和 Edge；不能直接复制到其他电脑作为通用安装包。
+- Windows x64：下载以 `-Windows-x64.exe` 结尾的便携版并双击。未进行商业代码签名，可能出现 SmartScreen 提示。
+- Linux x64：下载以 `-Linux-x64.AppImage` 结尾的文件，允许执行后双击。缺少 FUSE 时可使用 `./文件名 --appimage-extract-and-run`。
+- 应用通过 `127.0.0.1` 随机空闲端口提供内置静态资源，外部网站链接交给系统默认浏览器打开；关闭应用窗口即停止本地服务。
+
+### 自行打包
+
+要求 Node.js 22.12 或更高版本，包管理器使用 pnpm 10.28.2。以下命令在 `gnss-tools/` 中执行：
+
+```bash
+pnpm install
+pnpm check
+pnpm test:desktop
+pnpm desktop:dist
+```
+
+结果输出到 `release/`。Windows 便携版在 Windows 构建，Linux AppImage 在 Linux 构建。仓库根目录的 `.github/workflows/desktop-release.yml` 会在推送 `v*.*.*` 标签后分别构建两个平台，并将附件汇总到同名 GitHub Release；标签必须与 `package.json` 中的版本一致。`test:desktop` 专门验证根路径桌面构建，因此不要在运行它时设置 `NEXT_PUBLIC_BASE_PATH`。
 
 ## 1. 本地检查与构建
 
-要求 Node.js 20.9 或更高版本，包管理器使用 pnpm 10.28.2。
+要求 Node.js 22.12 或更高版本，包管理器使用 pnpm 10.28.2。
 
 ```bash
 cd gnss-tools
@@ -23,7 +34,7 @@ pnpm check
 pnpm build
 ```
 
-`pnpm check` 会先完成生产构建并生成 Next.js 类型，再依次执行类型检查、ESLint 和 77 项测试，确保干净克隆的仓库也能直接运行。完整静态网站输出到 `out/`，部署时必须上传整个目录，包括：
+`pnpm check` 会先完成生产构建并生成 Next.js 类型，再依次执行类型检查、ESLint 和 77 项算法测试，确保干净克隆的仓库也能直接运行。完整静态网站输出到 `out/`，部署时必须上传整个目录，包括：
 
 - `_next/` 中的脚本、样式和字体；
 - 各路由的 `index.html` 与 `index.txt`；

@@ -1,10 +1,13 @@
 {
-  "name": "my-v0-project",
+  "name": "gnss-time-tool",
   "version": "0.2.0",
   "private": true,
+  "description": "GNSS 时间转换、GNSS 日历、SP3 精度分析与广播星历转 SP3 桌面及网页工具",
+  "author": "Maybe2future",
+  "main": "desktop/main.cjs",
   "packageManager": "pnpm@10.28.2",
   "engines": {
-    "node": ">=20.9.0"
+    "node": ">=22.12.0"
   },
   "scripts": {
     "build": "next build",
@@ -12,8 +15,10 @@
     "lint": "next lint",
     "start": "next start",
     "test": "vitest run",
+    "test:desktop": "node --test desktop/static-server-check.cjs",
     "typecheck": "tsc --noEmit",
-    "check": "pnpm build && pnpm typecheck && pnpm lint && pnpm test"
+    "check": "pnpm build && pnpm typecheck && pnpm lint && pnpm test",
+    "desktop:dist": "electron-builder --publish never"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.1",
@@ -73,6 +78,8 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@vitejs/plugin-react": "^6.3.0",
+    "electron": "45.4.1",
+    "electron-builder": "26.18.0",
     "eslint": "8.57.1",
     "eslint-config-next": "^15.5.29",
     "jsdom": "^31.0.1",

@@ -1,0 +1,29 @@
+appId: xyz.cuautol.gnsstools
+productName: GNSS Time Tool
+copyright: Copyright © 2026 Maybe2future
+asar: true
+npmRebuild: false
+directories:
+  output: release
+files:
+  - desktop/main.cjs
+  - desktop/static-server.cjs
+  - out/**/*
+  - package.json
+  - "!node_modules/**/*"
+win:
+  icon: public/icons/app.ico
+  artifactName: GNSS-Time-Tool-${version}-Windows-x64.exe
+  target:
+    - target: portable
+      arch:
+        - x64
+linux:
+  icon: public/icons/icon-512.png
+  executableName: gnss-time-tool
+  category: Utility
+  artifactName: GNSS-Time-Tool-${version}-Linux-x64.AppImage
+  target:
+    - target: AppImage
+      arch:
+        - x64

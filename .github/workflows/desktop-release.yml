@@ -1,0 +1,111 @@
+name: Build desktop releases
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 发布标签，需与 package.json 版本一致
+        required: true
+        default: v0.2.0
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  RELEASE_TAG: ${{ inputs.tag_name || github.ref_name }}
+  NEXT_PUBLIC_BASE_PATH: ""
+  CSC_IDENTITY_AUTO_DISCOVERY: false
+
+jobs:
+  build:
+    name: Build ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows x64
+            os: windows-latest
+            artifact: desktop-windows
+            pattern: gnss-tools/release/*.exe
+          - name: Linux x64
+            os: ubuntu-latest
+            artifact: desktop-linux
+            pattern: gnss-tools/release/*.AppImage
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: gnss-tools
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.28.2
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: gnss-tools/pnpm-lock.yaml
+
+      - name: Check release version
+        shell: bash
+        run: node -e 'const p=require("./package.json"); if (`v${p.version}` !== process.env.RELEASE_TAG) throw new Error(`标签 ${process.env.RELEASE_TAG} 与版本 ${p.version} 不一致`)'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Test and build static app
+        run: pnpm check && pnpm test:desktop
+
+      - name: Package desktop app
+        run: pnpm desktop:dist
+
+      - name: Upload desktop artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.pattern }}
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download desktop artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: desktop-*
+          path: release-artifacts
+          merge-multiple: true
+
+      - name: Publish release
+        id: release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          target_commitish: ${{ github.sha }}
+          name: GNSS 时间工具 ${{ env.RELEASE_TAG }}
+          generate_release_notes: true
+          make_latest: true
+          body: |
+            ## 免安装桌面版
+
+            - **Windows x64**：下载以 `-Windows-x64.exe` 结尾的附件，双击运行，无需安装 Node.js。
+            - **Linux x64**：下载以 `-Linux-x64.AppImage` 结尾的附件，允许执行后双击运行。
+
+            应用资源全部内置，计算在本机完成。Windows 版本未进行商业代码签名，可能出现 SmartScreen 提示。
+          fail_on_unmatched_files: true
+          files: release-artifacts/*

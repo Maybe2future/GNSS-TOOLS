@@ -3,11 +3,10 @@
 import type React from "react"
 
 import { useState, useRef } from "react"
-import Link from "next/link"
-import { Home, FileUp, AlertCircle, Download, FileCheck, FileSpreadsheet } from "lucide-react"
+import { FileUp, AlertCircle, Download, FileCheck, FileSpreadsheet } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
-import { ThemeToggle } from "@/components/theme-toggle"
+import { SiteHeader } from "@/components/site-header"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Progress } from "@/components/ui/progress"
@@ -134,6 +133,13 @@ export default function SP3AnalyzerPage() {
       setProgress(10)
       setError(null)
 
+      // 重置上一次的结果状态，避免旧结果残留
+      setRmsData([])
+      setDiffData([])
+      setDiffRmsData([])
+      setTestSP3Data(null)
+      setReferenceSP3Data(null)
+
       // 读取测试文件内容
       const testContent = await readFileAsText(testFile)
       setProgress(30)
@@ -184,7 +190,16 @@ export default function SP3AnalyzerPage() {
     }
   }
 
-  const readFileAsText = (file: File): Promise<string> => {
+  const readFileAsText = async (file: File): Promise<string> => {
+    // .gz 压缩文件需要先用浏览器原生 DecompressionStream 解压
+    if (file.name.toLowerCase().endsWith(".gz")) {
+      if (typeof DecompressionStream === "undefined") {
+        throw new Error("当前浏览器不支持解压 .gz 文件，请先手动解压后再上传 .sp3 文件")
+      }
+      const decompressedStream = file.stream().pipeThrough(new DecompressionStream("gzip"))
+      return await new Response(decompressedStream).text()
+    }
+
     return new Promise((resolve, reject) => {
       const reader = new FileReader()
       reader.onload = (e) => {
@@ -315,24 +330,10 @@ export default function SP3AnalyzerPage() {
 
   return (
     <div className="min-h-screen pb-12">
-      <header className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 shadow-sm mb-8">
-        <div className="container mx-auto px-4 py-4 flex justify-between items-center">
-          <div className="flex items-center gap-4">
-            <Link href="/">
-              <Button variant="ghost" size="sm">
-                <Home className="mr-2 h-4 w-4" />
-                首页
-              </Button>
-            </Link>
-            <h1 className="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-600 to-indigo-600 dark:from-blue-400 dark:to-indigo-400">
-              SP3 文件比较分析器
-            </h1>
-          </div>
-          <ThemeToggle />
-        </div>
-      </header>
+      <SiteHeader />
 
       <main className="container mx-auto px-4">
+        <h1 className="text-2xl font-bold text-brand-gradient pt-8 mb-6">SP3 文件比较分析器</h1>
         <div className="max-w-4xl mx-auto">
           <Card className="mb-8">
             <CardHeader>
@@ -463,7 +464,7 @@ export default function SP3AnalyzerPage() {
                                 <div className="space-y-2">
                                   <div className="flex justify-between">
                                     <span className="font-medium">版本:</span>
-                                    <span>1.1</span>
+                                    <span>{testSP3Data.header.version ? `SP3-${testSP3Data.header.version}` : "未指定"}</span>
                                   </div>
                                   <div className="flex justify-between">
                                     <span className="font-medium">开始历元:</span>
@@ -503,7 +504,7 @@ export default function SP3AnalyzerPage() {
                                 <div className="space-y-2">
                                   <div className="flex justify-between">
                                     <span className="font-medium">版本:</span>
-                                    <span>1.1</span>
+                                    <span>{referenceSP3Data.header.version ? `SP3-${referenceSP3Data.header.version}` : "未指定"}</span>
                                   </div>
                                   <div className="flex justify-between">
                                     <span className="font-medium">开始历元:</span>
@@ -606,17 +607,20 @@ export default function SP3AnalyzerPage() {
                             </div>
                           ) : rmsData.length > 0 ? (
                             <div className="overflow-x-auto">
-                              <h3 className="text-lg font-medium mb-3">单文件RMS分析</h3>
+                              <h3 className="text-lg font-medium mb-3">单文件坐标离散度 (STD) 分析</h3>
+                              <p className="text-sm text-gray-500 dark:text-gray-400 mb-3">
+                                单文件模式为坐标相对均值的标准差，反映数据离散程度；真实精度请使用双文件对比模式。
+                              </p>
                               <table className="w-full border-collapse">
                                 <thead>
                                   <tr className="border-b">
                                     <th className="text-left py-2 px-2">卫星</th>
                                     <th className="text-left py-2 px-2">系统</th>
-                                    <th className="text-right py-2 px-2">3D RMS (m)</th>
-                                    <th className="text-right py-2 px-2">X RMS (m)</th>
-                                    <th className="text-right py-2 px-2">Y RMS (m)</th>
-                                    <th className="text-right py-2 px-2">Z RMS (m)</th>
-                                    <th className="text-right py-2 px-2">钟差 RMS (ns)</th>
+                                    <th className="text-right py-2 px-2">3D STD (m)</th>
+                                    <th className="text-right py-2 px-2">X STD (m)</th>
+                                    <th className="text-right py-2 px-2">Y STD (m)</th>
+                                    <th className="text-right py-2 px-2">Z STD (m)</th>
+                                    <th className="text-right py-2 px-2">钟差 STD (ns)</th>
                                   </tr>
                                 </thead>
                                 <tbody>
@@ -700,30 +704,30 @@ export default function SP3AnalyzerPage() {
                             </div>
                           ) : rmsData.length > 0 ? (
                             <div className="space-y-12">
-                              {/* 按系统分组显示单文件RMS图表 */}
+                              {/* 按系统分组显示单文件STD图表 */}
                               {groupSatellitesBySystem(rmsData).map((group, groupIndex) => (
                                 <div key={groupIndex} className="space-y-8 pt-4">
                                   <h3 className="text-xl font-semibold text-center">{group.system} 系统卫星</h3>
 
                                   <div>
-                                    <h4 className="text-lg font-medium mb-4">3D RMS精度 (米)</h4>
+                                    <h4 className="text-lg font-medium mb-4">3D 坐标离散度 (米)</h4>
                                     <div className="h-80">
                                       <SP3Chart
                                         data={group.satellites}
                                         dataKey="rms3D"
-                                        yAxisLabel="RMS (m)"
+                                        yAxisLabel="STD (m)"
                                         barColor="#3b82f6"
                                       />
                                     </div>
                                   </div>
 
                                   <div>
-                                    <h4 className="text-lg font-medium mb-4">XYZ坐标分量RMS (米)</h4>
+                                    <h4 className="text-lg font-medium mb-4">XYZ坐标分量STD (米)</h4>
                                     <div className="h-80">
                                       <SP3Chart
                                         data={group.satellites}
                                         dataKey={["rmsX", "rmsY", "rmsZ"]}
-                                        yAxisLabel="RMS (m)"
+                                        yAxisLabel="STD (m)"
                                         barColor={["#ef4444", "#22c55e", "#f59e0b"]}
                                         showLegend={true}
                                         legendLabels={["X", "Y", "Z"]}
@@ -732,12 +736,12 @@ export default function SP3AnalyzerPage() {
                                   </div>
 
                                   <div>
-                                    <h4 className="text-lg font-medium mb-4">钟差RMS (纳秒)</h4>
+                                    <h4 className="text-lg font-medium mb-4">钟差STD (纳秒)</h4>
                                     <div className="h-80">
                                       <SP3Chart
                                         data={group.satellites}
                                         dataKey="rmsClock"
-                                        yAxisLabel="RMS (ns)"
+                                        yAxisLabel="STD (ns)"
                                         barColor="#8b5cf6"
                                       />
                                     </div>
@@ -771,7 +775,7 @@ export default function SP3AnalyzerPage() {
               </p>
               <p>本工具支持两种模式：</p>
               <ul className="list-disc pl-5 space-y-1">
-                <li>单文件分析：仅上传测试文件，计算文件内部的RMS精度</li>
+                <li>单文件分析：仅上传测试文件，计算坐标相对均值的标准差（坐标离散度，不代表真实精度）</li>
                 <li>双文件比较：同时上传测试文件和参考文件，计算两个文件之间相同历元相同卫星的坐标差异RMS</li>
               </ul>
               <p>

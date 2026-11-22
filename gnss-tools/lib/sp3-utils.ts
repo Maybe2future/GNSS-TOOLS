@@ -52,6 +52,12 @@ interface DiffData {
   dclock: number
 }
 
+/** SP3 历元秒采用定点格式，保留亚毫秒历元以避免记录键碰撞。 */
+function formatSp3Seconds(value: string): string {
+  const seconds = Number.parseFloat(value)
+  return (Number.isFinite(seconds) ? seconds : 0).toFixed(8).padStart(11, "0")
+}
+
 // 解析SP3文件
 export function parseSP3File(content: string): SP3Data {
   const lines = content.split("\n")
@@ -95,7 +101,6 @@ export function parseSP3File(content: string): SP3Data {
   if (lines.length > 2 && lines[2].startsWith("+")) {
     // 第三行第3位到第6位是卫星数量
     sp3Data.header.satelliteCount = lines[2].substring(2, 6).trim()
-    console.log("预解析第三行卫星数:", sp3Data.header.satelliteCount)
   }
 
   while (lineIndex < lines.length) {
@@ -108,113 +113,74 @@ export function parseSP3File(content: string): SP3Data {
 
     // 处理头部
     if (isHeader) {
-      if (line.startsWith("#")) {
-        // 版本行
-        if (line.startsWith("#c")) {
-          sp3Data.header.version = line.substring(2, 5).trim()
-          console.log("Processing #c line:", line)
+      // GPS周、周内秒
+      if (line.startsWith("##")) {
+        const parts = line.substring(2).trim().split(/\s+/)
 
-          // 提取开始历元
-          const startEpochParts = line.substring(5).trim().split(/\s+/)
-          console.log("Start epoch parts:", startEpochParts)
-
-          if (startEpochParts.length >= 6) {
-            try {
-              // Ensure proper formatting with leading zeros
-              const year = startEpochParts[0].padStart(4, "0")
-              const month = startEpochParts[1].padStart(2, "0")
-              const day = startEpochParts[2].padStart(2, "0")
-              const hour = startEpochParts[3].padStart(2, "0")
-              const minute = startEpochParts[4].padStart(2, "0")
-
-              // Handle the second value carefully
-              let second = "00.00"
-              try {
-                second = Number.parseFloat(startEpochParts[5]).toFixed(2).padStart(5, "0")
-              } catch (e) {
-                console.error("Error parsing seconds:", e)
-              }
-
-              sp3Data.header.startEpoch = `${year}-${month}-${day} ${hour}:${minute}:${second}`
-              console.log("Formatted start epoch:", sp3Data.header.startEpoch)
-              // Log the formatted start epoch for debugging
-              console.log("IMPORTANT - Formatted start epoch:", sp3Data.header.startEpoch)
-            } catch (e) {
-              console.error("Error formatting start epoch:", e)
-            }
-          } else {
-            console.warn("Not enough parts to parse start epoch")
-          }
+        // 提取GPS周
+        if (parts.length >= 1) {
+          sp3Data.header.gpsWeek = parts[0].trim()
         }
+      } else if (/^#[a-z]/.test(line)) {
+        // 版本行（SP3-c/SP3-d 等）
+        sp3Data.header.version = line.charAt(1)
 
-        // 历元数和坐标系
-        if (line.startsWith("#h")) {
-          const parts = line.substring(2).trim().split(/\s+/)
-          if (parts.length >= 2) {
-            sp3Data.header.numberOfEpochs = Number.parseInt(parts[0], 10)
-            sp3Data.header.coordinateSystem = parts[1]
-          }
-        }
+        // 提取开始历元
+        const startEpochParts = line.substring(3).trim().split(/\s+/)
 
-        // GPS周、周内秒
-        if (line.startsWith("##")) {
-          const parts = line.substring(2).trim().split(/\s+/)
-
-          // 提取GPS周
-          if (parts.length >= 1) {
-            sp3Data.header.gpsWeek = parts[0].trim()
-          }
-
-          // 提取分析中心（如果有）
-          if (parts.length >= 6) {
-            sp3Data.header.agency = parts[5].trim()
-          }
-        }
-
-        // 卫星列表
-        if (line.startsWith("+")) {
-          // 确保已提取卫星数量
-          if (!sp3Data.header.satelliteCount) {
-            // Extract satellite count from characters 3-6 (positions 2-5 in 0-indexed string)
-            sp3Data.header.satelliteCount = line.substring(2, 6).trim()
-            console.log("Extracted satellite count from line:", line)
-            console.log("Extracted satellite count value:", sp3Data.header.satelliteCount)
-            // Log the extracted satellite count for debugging
-            console.log("IMPORTANT - Extracted satellite count:", sp3Data.header.satelliteCount)
-          }
-
-          // Try to parse the satellite count as a number
-          let numSats = 0
+        if (startEpochParts.length >= 6) {
           try {
-            numSats = Number.parseInt(sp3Data.header.satelliteCount, 10)
-            console.log("Parsed satellite count as number:", numSats)
-          } catch (e) {
-            console.error("Failed to parse satellite count:", e)
-            // Keep the string value even if parsing fails
-          }
+            // Ensure proper formatting with leading zeros
+            const year = startEpochParts[0].padStart(4, "0")
+            const month = startEpochParts[1].padStart(2, "0")
+            const day = startEpochParts[2].padStart(2, "0")
+            const hour = startEpochParts[3].padStart(2, "0")
+            const minute = startEpochParts[4].padStart(2, "0")
 
-          // If parsing succeeded, use the number, otherwise default to 17
-          const satsInLine = numSats > 0 ? Math.min(17, numSats) : 17
-
-          // Extract satellite IDs
-          for (let i = 0; i < satsInLine; i++) {
-            const satId = line.substring(9 + i * 3, 12 + i * 3).trim()
-            if (satId) {
-              sp3Data.header.satellites.push(satId)
+            // Handle the second value carefully
+            let second = "00.00"
+            try {
+              second = formatSp3Seconds(startEpochParts[5])
+            } catch {
+              // 秒解析失败时保留默认值
             }
+
+            sp3Data.header.startEpoch = `${year}-${month}-${day} ${hour}:${minute}:${second}`
+          } catch {
+            // 开始历元格式化失败时保留为空，后续用首个数据历元兜底
           }
         }
 
-        // 继续读取更多卫星（如果有）
-        if (line.startsWith("++") && sp3Data.header.satellites.length < sp3Data.header.numberOfEpochs) {
-          const remainingSats = sp3Data.header.numberOfEpochs - sp3Data.header.satellites.length
-          const satsInLine = Math.min(17, remainingSats)
+        // 历元数、数据类型、坐标系、轨道类型、机构：对第1行尾部按空白分词解析
+        // （不同机构文件的固定列对齐并不一致，分词比固定列截取更健壮）
+        const tailParts = line.substring(32).trim().split(/\s+/)
+        const parsedEpochs = Number.parseInt(tailParts[0] ?? "", 10)
+        if (!Number.isNaN(parsedEpochs)) {
+          sp3Data.header.numberOfEpochs = parsedEpochs
+        }
+        if (tailParts.length >= 3) {
+          sp3Data.header.coordinateSystem = tailParts[2]
+        }
+      } else if (line.startsWith("++")) {
+        // ++ 行为卫星精度信息行，不参与解析，直接跳过
+      } else if (line.startsWith("+")) {
+        // 卫星列表行（最多5行续行，每行最多17颗卫星）
+        // 确保已提取卫星数量
+        if (!sp3Data.header.satelliteCount) {
+          // Extract satellite count from characters 3-6 (positions 2-5 in 0-indexed string)
+          sp3Data.header.satelliteCount = line.substring(2, 6).trim()
+        }
 
-          for (let i = 0; i < satsInLine; i++) {
-            const satId = line.substring(9 + i * 3, 12 + i * 3).trim()
-            if (satId) {
-              sp3Data.header.satellites.push(satId)
-            }
+        // 达到声明的卫星数量后停止解析
+        const numSats = Number.parseInt(sp3Data.header.satelliteCount, 10)
+        const remainingSats = numSats > 0 ? numSats - sp3Data.header.satellites.length : 17
+        const satsInLine = Math.min(17, Math.max(0, remainingSats))
+
+        // 提取卫星编号（第10列起，每颗占3个字符）
+        for (let i = 0; i < satsInLine; i++) {
+          const satId = line.substring(9 + i * 3, 12 + i * 3).trim()
+          if (satId) {
+            sp3Data.header.satellites.push(satId)
           }
         }
       } else if (line.startsWith("*")) {
@@ -233,21 +199,19 @@ export function parseSP3File(content: string): SP3Data {
             const minute = epochParts[4].padStart(2, "0")
             let second = "00.00"
             try {
-              second = Number.parseFloat(epochParts[5]).toFixed(2).padStart(5, "0")
-            } catch (e) {
-              console.error("Error parsing seconds in first epoch:", e)
+              second = formatSp3Seconds(epochParts[5])
+            } catch {
+              // 秒解析失败时保留默认值
             }
-            
+
             currentEpoch = `${year}-${month}-${day} ${hour}:${minute}:${second}`
             sp3Data.epochs.push(currentEpoch)
-            
+
             // 如果还没有设置开始历元，则设置它
             if (!sp3Data.header.startEpoch) {
               sp3Data.header.startEpoch = currentEpoch
-              console.log("Setting start epoch from first epoch line:", sp3Data.header.startEpoch)
             }
-          } catch (e) {
-            console.error("Error formatting first epoch:", e)
+          } catch {
             // 如果出错，仍然尝试使用原始格式
             currentEpoch = `${epochParts[0]}-${epochParts[1]}-${epochParts[2]} ${epochParts[3]}:${epochParts[4]}:${epochParts[5]}`
             sp3Data.epochs.push(currentEpoch)
@@ -269,24 +233,22 @@ export function parseSP3File(content: string): SP3Data {
             const minute = epochParts[4].padStart(2, "0")
             let second = "00.00"
             try {
-              second = Number.parseFloat(epochParts[5]).toFixed(2).padStart(5, "0")
-            } catch (e) {
-              console.error("Error parsing seconds in data section:", e)
+              second = formatSp3Seconds(epochParts[5])
+            } catch {
+              // 秒解析失败时保留默认值
             }
-            
+
             currentEpoch = `${year}-${month}-${day} ${hour}:${minute}:${second}`
             sp3Data.epochs.push(currentEpoch)
 
             // 如果是第一个历元，而且之前没有设置开始历元，则设置它
             if (sp3Data.epochs.length === 1 && !sp3Data.header.startEpoch) {
               sp3Data.header.startEpoch = currentEpoch
-              console.log("Setting start epoch from first data epoch:", sp3Data.header.startEpoch)
             }
 
             // 更新结束历元
             sp3Data.header.endEpoch = currentEpoch
-          } catch (e) {
-            console.error("Error formatting epoch in data section:", e)
+          } catch {
             // 如果出错，仍然尝试使用原始格式
             currentEpoch = `${epochParts[0]}-${epochParts[1]}-${epochParts[2]} ${epochParts[3]}:${epochParts[4]}:${epochParts[5]}`
             sp3Data.epochs.push(currentEpoch)
@@ -299,12 +261,24 @@ export function parseSP3File(content: string): SP3Data {
           const system = satId.charAt(0)
           const prn = satId.substring(1)
 
+          // 先按原始单位解析（坐标km，钟差μs），便于识别坏值标记
+          const rawX = Number.parseFloat(line.substring(4, 18).trim())
+          const rawY = Number.parseFloat(line.substring(18, 32).trim())
+          const rawZ = Number.parseFloat(line.substring(32, 46).trim())
+          const rawClock = Number.parseFloat(line.substring(46, 60).trim())
+
+          // 跳过坏值记录：钟差为999999.999999μs，或坐标全为0.000000km
+          if (Math.abs(rawClock) >= 999999 || (rawX === 0 && rawY === 0 && rawZ === 0)) {
+            lineIndex++
+            continue
+          }
+
           // SP3文件中坐标单位是km，转换为m
-          const x = Number.parseFloat(line.substring(4, 18).trim()) * 1000
-          const y = Number.parseFloat(line.substring(18, 32).trim()) * 1000
-          const z = Number.parseFloat(line.substring(32, 46).trim()) * 1000
+          const x = rawX * 1000
+          const y = rawY * 1000
+          const z = rawZ * 1000
           // 钟差单位是微秒(μs)，转换为纳秒(ns)
-          const clock = Number.parseFloat(line.substring(46, 60).trim()) * 1000
+          const clock = rawClock * 1000
 
           sp3Data.records.push({
             id: satId,
@@ -323,21 +297,10 @@ export function parseSP3File(content: string): SP3Data {
     lineIndex++
   }
 
-  // Debug log key values before returning
-  console.log("Final SP3 Data - Satellite Count:", sp3Data.header.satelliteCount)
-  console.log("Final SP3 Data - Start Epoch:", sp3Data.header.startEpoch)
-  console.log("Final SP3 Data - Satellites Array Length:", sp3Data.header.satellites.length)
-
-  // Final debug log for critical values
-  console.log("FINAL VALUES - File parsing complete")
-  console.log("FINAL VALUES - Satellite Count:", sp3Data.header.satelliteCount)
-  console.log("FINAL VALUES - Start Epoch:", sp3Data.header.startEpoch)
-
   // 确保startEpoch始终有值
   if (!sp3Data.header.startEpoch && sp3Data.epochs.length > 0) {
     // 如果未能从头部解析开始历元，但有数据历元，则使用第一个数据历元作为开始历元
     sp3Data.header.startEpoch = sp3Data.epochs[0];
-    console.log("Using first data epoch as start epoch:", sp3Data.header.startEpoch);
   }
 
   return sp3Data

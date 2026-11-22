@@ -41,7 +41,10 @@ export function SP3Chart({ data, dataKey, yAxisLabel, barColor, showLegend = fal
           }}
           tick={{ fontSize: 12 }}
         />
-        <Tooltip formatter={(value: number) => value.toFixed(6)} labelFormatter={(label) => `卫星: ${label}`} />
+        <Tooltip
+          formatter={(value) => (typeof value === "number" ? value.toFixed(6) : String(value ?? "—"))}
+          labelFormatter={(label) => `卫星: ${label}`}
+        />
         {showLegend && <Legend verticalAlign="top" wrapperStyle={{ paddingBottom: 10 }} />}
         {Array.isArray(dataKey) ? dataKey.map((_, index) => renderBar(barColor, index)) : renderBar(barColor)}
       </BarChart>

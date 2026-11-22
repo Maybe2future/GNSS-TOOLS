@@ -3,11 +3,10 @@
 import type React from "react"
 
 import { useState, useRef } from "react"
-import Link from "next/link"
-import { Home, FileUp, AlertCircle, Download, FileText, Settings } from "lucide-react"
+import { FileUp, AlertCircle, Download, FileText, Settings } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
-import { ThemeToggle } from "@/components/theme-toggle"
+import { SiteHeader } from "@/components/site-header"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Progress } from "@/components/ui/progress"
 import { Badge } from "@/components/ui/badge"
@@ -25,6 +24,7 @@ export default function BroadcastToSP3Page() {
   const [isProcessing, setIsProcessing] = useState(false)
   const [progress, setProgress] = useState(0)
   const [error, setError] = useState<string | null>(null)
+  const [warning, setWarning] = useState<string | null>(null)
 
   // 转换设置
   const [interval, setInterval] = useState<number>(900) // 默认15分钟间隔
@@ -36,17 +36,10 @@ export default function BroadcastToSP3Page() {
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0]
     if (selectedFile) {
-      // 检查文件扩展名，支持更多格式
-      const fileName = selectedFile.name.toLowerCase()
-      if (
-        !fileName.endsWith(".n") &&
-        !fileName.endsWith(".nav") &&
-        !fileName.endsWith(".rnx") &&
-        !fileName.endsWith("p") &&
-        !fileName.endsWith(".23p") &&
-        !/\.\d+p$/.test(fileName) // 支持 .数字p 格式
-      ) {
-        setError("请上传有效的RINEX导航文件 (.n, .nav, .rnx, .p, .数字p)")
+      // 检查文件扩展名：.n / .nav / .rnx / RINEX2 年积扩展名（如 .24n .24g .24p）
+      const fileName = selectedFile.name
+      if (!/\.(n|nav|rnx|\d{2}[gpn])$/i.test(fileName)) {
+        setError("请上传有效的RINEX导航文件 (.n, .nav, .rnx, .数字n/g/p)")
         setBroadcastFile(null)
         return
       }
@@ -56,6 +49,7 @@ export default function BroadcastToSP3Page() {
       const baseName = selectedFile.name.split(".")[0]
       setFileName(`${baseName}.sp3`)
       setError(null)
+      setWarning(null)
       setSP3Content(null)
     }
   }
@@ -67,10 +61,18 @@ export default function BroadcastToSP3Page() {
       return
     }
 
+    // 转换前校验历元间隔：必须是大于 0 的有限数值
+    if (!Number.isFinite(interval) || interval <= 0) {
+      setError("历元间隔必须是大于 0 的数值，请检查转换设置")
+      return
+    }
+    const safeInterval = Math.max(1, interval)
+
     try {
       setIsProcessing(true)
       setProgress(10)
       setError(null)
+      setWarning(null)
 
       // 读取文件内容
       const fileContent = await readFileAsText(broadcastFile)
@@ -85,8 +87,20 @@ export default function BroadcastToSP3Page() {
         throw new Error("未能从文件中解析出有效的广播星历数据")
       }
 
+      // 提示跳过/丢弃的记录数
+      const warnings: string[] = []
+      if (broadcastData.skippedSatellites > 0) {
+        warnings.push(`已跳过 ${broadcastData.skippedSatellites} 条 GLONASS/SBAS 星历记录（暂不支持）`)
+      }
+      if (broadcastData.droppedRecords > 0) {
+        warnings.push(`已丢弃 ${broadcastData.droppedRecords} 条校验失败的星历记录`)
+      }
+      if (warnings.length > 0) {
+        setWarning(warnings.join("；"))
+      }
+
       // 转换为SP3格式，传递用户设置的间隔值
-      const sp3Data = convertBroadcastToSP3(broadcastData, interval)
+      const sp3Data = convertBroadcastToSP3(broadcastData, safeInterval)
       setProgress(80)
 
       // 生成SP3文件内容
@@ -126,22 +140,15 @@ export default function BroadcastToSP3Page() {
     e.preventDefault()
     const droppedFile = e.dataTransfer.files[0]
     if (droppedFile) {
-      const fileName = droppedFile.name.toLowerCase()
-      if (
-        !fileName.endsWith(".n") &&
-        !fileName.endsWith(".nav") &&
-        !fileName.endsWith(".rnx") &&
-        !fileName.endsWith("p") &&
-        !fileName.endsWith(".23p") &&
-        !/\.\d+p$/.test(fileName) // 支持 .数字p 格式
-      ) {
-        setError("请上传有效的RINEX导航文件 (.n, .nav, .rnx, .p, .数字p)")
+      if (!/\.(n|nav|rnx|\d{2}[gpn])$/i.test(droppedFile.name)) {
+        setError("请上传有效的RINEX导航文件 (.n, .nav, .rnx, .数字n/g/p)")
         return
       }
       setBroadcastFile(droppedFile)
       const baseName = droppedFile.name.split(".")[0]
       setFileName(`${baseName}.sp3`)
       setError(null)
+      setWarning(null)
       setSP3Content(null)
     }
   }
@@ -166,24 +173,12 @@ export default function BroadcastToSP3Page() {
 
   return (
     <div className="min-h-screen pb-12">
-      <header className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 shadow-sm mb-8">
-        <div className="container mx-auto px-4 py-4 flex justify-between items-center">
-          <div className="flex items-center gap-4">
-            <Link href="/">
-              <Button variant="ghost" size="sm">
-                <Home className="mr-2 h-4 w-4" />
-                首页
-              </Button>
-            </Link>
-            <h1 className="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-red-600 to-orange-600 dark:from-red-400 dark:to-orange-400">
-              广播星历转SP3
-            </h1>
-          </div>
-          <ThemeToggle />
-        </div>
-      </header>
+      <SiteHeader />
 
       <main className="container mx-auto px-4">
+        <h1 className="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-red-600 to-orange-600 dark:from-red-400 dark:to-orange-400 pt-8 mb-6">
+          广播星历转SP3
+        </h1>
         <div className="max-w-4xl mx-auto">
           <Card className="mb-8">
             <CardHeader>
@@ -205,7 +200,7 @@ export default function BroadcastToSP3Page() {
                       ref={fileInputRef}
                       onChange={handleFileChange}
                       className="hidden"
-                      accept=".n,.nav,.rnx,.p,.23p,.*p"
+                      accept=".n,.nav,.rnx"
                     />
                     <div className="flex flex-col items-center justify-center gap-3">
                       <div className="p-3 bg-red-50 dark:bg-red-900/20 rounded-full">
@@ -214,7 +209,7 @@ export default function BroadcastToSP3Page() {
                       <div>
                         <h4 className="text-base font-medium mb-1">上传RINEX导航文件</h4>
                         <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
-                          支持 .n, .nav, .rnx, .p, .数字p 格式
+                          支持 .n, .nav, .rnx, .数字n/g/p 格式
                         </p>
                         <Button onClick={triggerFileInput} size="sm">
                           <FileUp className="mr-2 h-4 w-4" />
@@ -294,13 +289,21 @@ export default function BroadcastToSP3Page() {
                 </Alert>
               )}
 
+              {warning && (
+                <Alert className="mb-6">
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertTitle>注意</AlertTitle>
+                  <AlertDescription>{warning}</AlertDescription>
+                </Alert>
+              )}
+
               {sp3Content && (
                 <div>
                   <h3 className="text-lg font-medium mb-3">转换结果预览</h3>
                   <div className="bg-gray-50 dark:bg-gray-800/50 p-4 rounded-lg">
                     <pre className="text-xs overflow-x-auto max-h-60">{sp3Content.slice(0, 1000)}...</pre>
                   </div>
-                  <p className="text-sm text-gray-500 mt-2">注: 仅显示前1000个字符。点击"下载SP3"按钮获取完整文件。</p>
+                  <p className="text-sm text-gray-500 mt-2">注：仅显示前 1000 个字符。点击“下载 SP3”按钮获取完整文件。</p>
                 </div>
               )}
             </CardContent>
@@ -320,9 +323,9 @@ export default function BroadcastToSP3Page() {
               </p>
               <p>转换后的SP3文件包含以下信息:</p>
               <ul className="list-disc pl-5 space-y-1">
-                <li>卫星位置坐标 (X, Y, Z)，单位为米</li>
-                <li>卫星钟差，单位为纳秒</li>
-                <li>按指定时间间隔采样的历元</li>
+                <li>卫星位置坐标 (X, Y, Z)，单位为千米(km)</li>
+                <li>卫星钟差，单位为微秒(μs)</li>
+                <li>按指定时间间隔采样的历元，位置由广播星历开普勒模型实时计算</li>
               </ul>
               <p>请注意，广播星历的精度通常低于精密星历，转换后的SP3文件精度取决于原始广播星历的精度。</p>
             </CardContent>

@@ -1,0 +1,17 @@
+# 本机运行数据
+.runtime/
+
+# 依赖与构建产物
+node_modules/
+.next/
+out/
+tsconfig.tsbuildinfo
+next-env.d.ts
+
+# 日志与系统文件
+*.log
+.DS_Store
+Thumbs.db
+
+# 本机快捷方式
+*.lnk

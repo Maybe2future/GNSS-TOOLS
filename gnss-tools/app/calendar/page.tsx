@@ -14,14 +14,13 @@ import {
   setMonth,
   setYear,
 } from "date-fns"
-import { ChevronLeft, ChevronRight, Home, CalendarIcon } from "lucide-react"
+import { ChevronLeft, ChevronRight, CalendarIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
-import Link from "next/link"
-import { calculateGPSWeekAndTow, calculateBDSWeekAndTow, getDayOfWeekFromTow } from "@/lib/gnss-utils"
+import { timestampToWeekTow, getDayOfWeekFromTow, getDayOfWeekName } from "@/lib/gnss-utils"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { ThemeToggle } from "@/components/theme-toggle"
+import { SiteHeader } from "@/components/site-header"
 
 export default function CalendarPage() {
   const [currentDate, setCurrentDate] = useState(new Date())
@@ -42,6 +41,13 @@ export default function CalendarPage() {
 
   const handleSelectDate = (date: Date) => {
     setSelectedDate(date)
+  }
+
+  // 将选中的本地日期转为当天 00:00:00 的时间戳，并视为各系统的时间戳来计算周秒
+  // （与时间转换器页的语义一致：日历值直接视为该系统时间尺度下的读数）
+  const getSystemTimestamp = (date: Date | null): number | null => {
+    if (!date) return null
+    return Date.UTC(date.getFullYear(), date.getMonth(), date.getDate())
   }
 
   const currentYear = getYear(currentDate)
@@ -88,24 +94,10 @@ export default function CalendarPage() {
 
   return (
     <div className="min-h-screen pb-12">
-      <header className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 shadow-sm mb-8">
-        <div className="container mx-auto px-4 py-4 flex justify-between items-center">
-          <div className="flex items-center gap-4">
-            <Link href="/">
-              <Button variant="ghost" size="sm">
-                <Home className="mr-2 h-4 w-4" />
-                首页
-              </Button>
-            </Link>
-            <h1 className="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-600 to-indigo-600 dark:from-blue-400 dark:to-indigo-400">
-              GNSS 日历
-            </h1>
-          </div>
-          <ThemeToggle />
-        </div>
-      </header>
+      <SiteHeader />
 
       <main className="container mx-auto px-4">
+        <h1 className="text-2xl font-bold text-brand-gradient pt-8 mb-6">GNSS 日历</h1>
         <Card className="mb-8 gnss-card overflow-hidden">
           <CardContent className="p-6">
             <div className="flex flex-col sm:flex-row justify-between items-center mb-6 gap-4">
@@ -219,38 +211,51 @@ export default function CalendarPage() {
                   </div>
                   <div className="flex justify-between items-center py-2">
                     <span className="font-medium">星期:</span>
-                    <span>{format(selectedDate, "EEEE")}</span>
+                    <span>{getDayOfWeekName(selectedDate.getDay())}</span>
                   </div>
                 </div>
 
                 <div className="space-y-4 bg-indigo-50 dark:bg-indigo-900/20 p-4 rounded-lg">
                   <h4 className="font-medium text-indigo-700 dark:text-indigo-300 text-center">GNSS 时间</h4>
-                  <div className="flex justify-between items-center py-2 border-b border-indigo-100 dark:border-indigo-800">
-                    <span className="font-medium">GPS 周:</span>
-                    <span className="font-bold">{calculateGPSWeekAndTow(selectedDate).week}</span>
-                  </div>
-                  <div className="flex justify-between items-center py-2 border-b border-indigo-100 dark:border-indigo-800">
-                    <span className="font-medium">GPS 周内秒:</span>
-                    <span className="font-bold">{calculateGPSWeekAndTow(selectedDate).tow}</span>
-                  </div>
-                  <div className="flex justify-between items-center py-2 border-b border-indigo-100 dark:border-indigo-800">
-                    <span className="font-medium">GPS 周内日:</span>
-                    <span>{getDayOfWeekFromTow(calculateGPSWeekAndTow(selectedDate).tow)}</span>
-                  </div>
-                  <div className="flex justify-between items-center py-2 border-b border-indigo-100 dark:border-indigo-800">
-                    <span className="font-medium">北斗 周:</span>
-                    <span className="font-bold">{calculateBDSWeekAndTow(selectedDate).week}</span>
-                  </div>
-                  <div className="flex justify-between items-center py-2 border-b border-indigo-100 dark:border-indigo-800">
-                    <span className="font-medium">北斗 周内秒:</span>
-                    <span className="font-bold">{calculateBDSWeekAndTow(selectedDate).tow}</span>
-                  </div>
-                  <div className="flex justify-between items-center py-2">
-                    <span className="font-medium">北斗 周内日:</span>
-                    <span>{getDayOfWeekFromTow(calculateBDSWeekAndTow(selectedDate).tow)}</span>
-                  </div>
+                  {(() => {
+                    const ts = getSystemTimestamp(selectedDate)
+                    if (ts === null) return null
+                    const gps = timestampToWeekTow("GPS", ts)
+                    const bds = timestampToWeekTow("BDS", ts)
+                    return (
+                      <>
+                        <div className="flex justify-between items-center py-2 border-b border-indigo-100 dark:border-indigo-800">
+                          <span className="font-medium">GPS 周:</span>
+                          <span className="font-bold">{gps.week}</span>
+                        </div>
+                        <div className="flex justify-between items-center py-2 border-b border-indigo-100 dark:border-indigo-800">
+                          <span className="font-medium">GPS 周内秒:</span>
+                          <span className="font-bold">{gps.tow}</span>
+                        </div>
+                        <div className="flex justify-between items-center py-2 border-b border-indigo-100 dark:border-indigo-800">
+                          <span className="font-medium">GPS 周内日:</span>
+                          <span>{getDayOfWeekName(getDayOfWeekFromTow(gps.tow))}</span>
+                        </div>
+                        <div className="flex justify-between items-center py-2 border-b border-indigo-100 dark:border-indigo-800">
+                          <span className="font-medium">北斗 周:</span>
+                          <span className="font-bold">{bds.week}</span>
+                        </div>
+                        <div className="flex justify-between items-center py-2 border-b border-indigo-100 dark:border-indigo-800">
+                          <span className="font-medium">北斗 周内秒:</span>
+                          <span className="font-bold">{bds.tow}</span>
+                        </div>
+                        <div className="flex justify-between items-center py-2">
+                          <span className="font-medium">北斗 周内日:</span>
+                          <span>{getDayOfWeekName(getDayOfWeekFromTow(bds.tow))}</span>
+                        </div>
+                      </>
+                    )
+                  })()}
                 </div>
               </div>
+              <p className="mt-4 text-center text-xs text-muted-foreground">
+                注：所选日期按各系统时间尺度解释（与时间转换器页一致），周内秒为当天 00:00:00 的起始值
+              </p>
             </CardContent>
           </Card>
         )}

@@ -1,0 +1,25 @@
+{
+  "name": "GNSS 工具集 - 卫星导航时间工具",
+  "short_name": "GNSS 工具集",
+  "description": "GNSS 时间转换、GNSS 日历、SP3 精度分析与广播星历转 SP3。",
+  "lang": "zh-CN",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f8fafc",
+  "theme_color": "#2563eb",
+  "icons": [
+    {
+      "src": "./icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "./icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

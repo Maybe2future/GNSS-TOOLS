@@ -1,8 +1,6 @@
-import Link from "next/link"
-import { ExternalLink, Home, Globe, Database, Navigation } from "lucide-react"
-import { Button } from "@/components/ui/button"
+import { ExternalLink, Globe, Database, Navigation } from "lucide-react"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
-import { ThemeToggle } from "@/components/theme-toggle"
+import { SiteHeader } from "@/components/site-header"
 
 // 网站数据
 const websites = [
@@ -65,27 +63,10 @@ const websites = [
 export default function ResourcesPage() {
   return (
     <div className="min-h-screen pb-12">
-      <header className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 shadow-sm mb-8">
-        <div className="container mx-auto px-4 py-4 flex justify-between items-center">
-          <div className="flex items-center gap-4">
-            <Link href="/">
-              <Button variant="ghost" size="sm">
-                <Home className="mr-2 h-4 w-4" />
-                首页
-              </Button>
-            </Link>
-            <h1 className="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-600 to-indigo-600 dark:from-blue-400 dark:to-indigo-400">
-              GNSS 资源链接
-            </h1>
-          </div>
-          <div className="flex items-center gap-2">
-            <ThemeToggle />
-          </div>
-        </div>
-      </header>
+      <SiteHeader />
 
       <main className="container mx-auto px-4">
-        <div className="max-w-3xl mx-auto text-center mb-10">
+        <div className="max-w-3xl mx-auto text-center mb-10 pt-8">
           <h2 className="text-3xl font-bold mb-4">各类官网资源</h2>
           <p className="text-muted-foreground">收集了GNSS领域常用的官方网站、数据中心和资源链接，方便快速访问</p>
         </div>

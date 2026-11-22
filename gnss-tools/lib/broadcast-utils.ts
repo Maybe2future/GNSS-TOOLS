@@ -1,8 +1,31 @@
 // lib/broadcast-utils.ts
 
-// RINEX Navigation File Parsing and SP3 Conversion Utilities
+// RINEX 导航文件（广播星历）解析与 SP3 转换工具
+// 支持 RINEX 3.x 混合导航文件（G/E/C/J）与 RINEX 2.x GPS 导航文件。
+// GLONASS(R) / SBAS(S) 记录只有 3 行续行且需要数值积分，暂不支持，解析时跳过并计数。
 
-interface RINEXNavigationData {
+// RINEX 数据行中的数值令牌：支持 Fortran D 指数（如 -1.234567890123D-04）
+// 以及 19 字符定宽字段负数无空格拼接的情况（如 ...D-04-9.094947017729D-13）
+const NUM_TOKEN = /[+-]?\d+\.\d+(?:[DdEe][+-]?\d+)?/g
+
+const WEEK_MS = 604800000 // 一周的毫秒数
+const HALF_WEEK_S = 302400 // 半周秒数（用于周内秒回绕）
+const GPS_EPOCH_MS = Date.UTC(1980, 0, 6) // GPST 原点：1980-01-06 00:00:00
+const BDS_EPOCH_MS = Date.UTC(2006, 0, 1) // BDT 原点：2006-01-01 00:00:00
+const BDT_GPST_OFFSET_MS = 14000 // BDT = GPST - 14s
+
+// 各卫星系统的开普勒模型常数（依据 GPS ICD-200 / BDS ICD）
+const SYSTEM_PARAMS: Record<string, { mu: number; omegaE: number; epochMs: number }> = {
+  G: { mu: 3.986005e14, omegaE: 7.2921151467e-5, epochMs: GPS_EPOCH_MS },
+  J: { mu: 3.986005e14, omegaE: 7.2921151467e-5, epochMs: GPS_EPOCH_MS },
+  E: { mu: 3.986004418e14, omegaE: 7.2921151467e-5, epochMs: GPS_EPOCH_MS },
+  C: { mu: 3.986004418e14, omegaE: 7.292115e-5, epochMs: BDS_EPOCH_MS },
+}
+
+// 相对论效应常数 F = -2*sqrt(mu)/c^2 (s/m^0.5)
+const F_REL = -4.442807633e-10
+
+export interface RINEXNavigationData {
   header: {
     version: string
     fileType: string
@@ -13,32 +36,49 @@ interface RINEXNavigationData {
     leapSeconds: number
   }
   ephemerides: Ephemeris[]
+  /** 跳过的 GLONASS/SBAS 星历记录数 */
+  skippedSatellites: number
+  /** 校验失败被丢弃的星历记录数 */
+  droppedRecords: number
 }
 
-interface Ephemeris {
-  epoch: string
+export interface Ephemeris {
+  /** 卫星ID，如 G01 / C21 */
   satellite: string
+  /** 系统字符：G GPS / E Galileo / C BDS / J QZSS */
+  system: string
+  /** 记录历元（即 toc），毫秒数，卫星系统自身时间尺度（GPST 或 BDT） */
+  epochMs: number
+  /** 扁平数据数组：[af0, af1, af2, IODE, Crs, delta_n, M0, Cuc, e, Cus, sqrtA, toe, Cic, OMEGA0, Cis, i0, Crc, omega, OMEGADOT, IDOT, codesL2, week, L2P, acc, health, TGD, IODC, ...] */
   data: number[]
 }
 
 // SP3文件数据结构
-interface SP3RecordSatellite {
+export interface SP3RecordSatellite {
   id: string
+  /** 千米 */
   x: number
   y: number
   z: number
+  /** 微秒 */
   clock: number
 }
 
-interface SP3Record {
+export interface SP3Record {
+  /** 历元（GPST 毫秒数） */
+  epochMs: number
+  /** 供显示用的格式化历元字符串（由毫秒值按 UTC 生成） */
   epoch: string
   satellites: SP3RecordSatellite[]
 }
 
-interface SP3Data {
+export interface SP3Data {
   header: {
     version?: string
+    /** 供显示用的格式化起始历元字符串 */
     startEpoch: string
+    /** 起始历元（GPST 毫秒数） */
+    startEpochMs: number
     numberOfEpochs: number
     dataUsed?: string
     coordinateSystem?: string
@@ -51,12 +91,34 @@ interface SP3Data {
 }
 
 /**
- * 解析 RINEX 导航��件内容
+ * 用全局正则对 RINEX 数据行进行分词，避免定宽字段无空格拼接导致 NaN
+ * @param text 待分词的文本（数据行或历元行数据部分）
+ * @returns 数值数组
+ */
+function tokenizeNumbers(text: string): number[] {
+  const tokens = text.match(NUM_TOKEN) || []
+  return tokens.map((t) => Number.parseFloat(t.replace(/[Dd]/, "E")))
+}
+
+/**
+ * 校验并添加一条星历记录；字段不足或含非法值则丢弃并计数
+ */
+function addRecord(nav: RINEXNavigationData, satellite: string, system: string, epochMs: number, values: number[]): void {
+  // 至少需要到 IODC/TGD2（索引26），即 27 个数值
+  if (values.length >= 27 && values.every((v) => Number.isFinite(v))) {
+    nav.ephemerides.push({ satellite, system, epochMs, data: values })
+  } else {
+    nav.droppedRecords++
+  }
+}
+
+/**
+ * 解析 RINEX 导航文件内容
  * @param content RINEX 导航文件内容
- * @returns 解析后的数据
+ * @returns 解析后的数据（历元以毫秒数存储）
  */
 export function parseRINEXNav(content: string): RINEXNavigationData {
-  const lines = content.split("\n")
+  const lines = content.split(/\r?\n/)
   const navigationData: RINEXNavigationData = {
     header: {
       version: "",
@@ -68,81 +130,260 @@ export function parseRINEXNav(content: string): RINEXNavigationData {
       leapSeconds: 0,
     },
     ephemerides: [],
+    skippedSatellites: 0,
+    droppedRecords: 0,
   }
 
-  let lineIndex = 0
-  let readingHeader = true
-  let currentEphemeris: any = null
+  let i = 0
+  let version = 0
 
-  while (lineIndex < lines.length) {
-    const line = lines[lineIndex].trim()
-
-    if (readingHeader) {
-      if (line.includes("RINEX VERSION / TYPE")) {
-        const parts = line.split(" ")
-        navigationData.header.version = parts[0]
-        navigationData.header.fileType = parts[3]
-        navigationData.header.satelliteSystem = parts[4]
-      } else if (line.includes("PGM / RUN BY / DATE")) {
-        const parts = line.split(" ")
-        navigationData.header.program = parts[0]
-        navigationData.header.agency = parts[3]
-        navigationData.header.date = parts[6]
-      } else if (line.includes("LEAP SECONDS")) {
-        const parts = line.split(" ")
-        navigationData.header.leapSeconds = Number(parts[0])
-      } else if (line.includes("END OF HEADER")) {
-        readingHeader = false
-      }
-    } else {
-      if (line.startsWith("G") || line.startsWith("R") || line.startsWith("E") || line.startsWith("C")) {
-        // 开始新的星历数据
-        const satellite = line.substring(0, 3).trim()
-        const epochLine = line.substring(3).trim().split(/\s+/)
-        const year = Number.parseInt(epochLine[0])
-        const month = Number.parseInt(epochLine[1])
-        const day = Number.parseInt(epochLine[2])
-        const hour = Number.parseInt(epochLine[3])
-        const minute = Number.parseInt(epochLine[4])
-        const second = Number.parseFloat(epochLine[5])
-
-        const epoch = `${year}-${month.toString().padStart(2, "0")}-${day.toString().padStart(2, "0")} ${hour.toString().padStart(2, "0")}:${minute.toString().padStart(2, "0")}:${second.toFixed(2)}`
-
-        currentEphemeris = {
-          satellite: satellite,
-          epoch: epoch,
-          data: [],
-        }
-
-        navigationData.ephemerides.push(currentEphemeris)
-
-        // 读取后续7行数据
-        for (let i = 0; i < 7; i++) {
-          lineIndex++
-          const dataLine = lines[lineIndex].trim()
-          const dataValues = dataLine.split(/\s+/).map(Number)
-          currentEphemeris.data = currentEphemeris.data.concat(dataValues)
-        }
-      }
+  // ---- 头部解析 ----
+  for (; i < lines.length; i++) {
+    const line = lines[i]
+    if (i === 0) {
+      // 版本号位于首行前 9 个字符
+      version = Number.parseFloat(line.substring(0, 9)) || 0
+      navigationData.header.version = String(Number.parseFloat(line.substring(0, 9)) || "")
     }
+    if (line.includes("RINEX VERSION / TYPE")) {
+      version = Number.parseFloat(line.substring(0, 9)) || version
+      navigationData.header.version = String(Number.parseFloat(line.substring(0, 9)) || "")
+      navigationData.header.fileType = line.substring(20, 40).trim()
+      navigationData.header.satelliteSystem = line.substring(40, 60).trim()
+    } else if (line.includes("PGM / RUN BY / DATE")) {
+      navigationData.header.program = line.substring(0, 20).trim()
+      navigationData.header.agency = line.substring(20, 40).trim()
+      navigationData.header.date = line.substring(40, 60).trim()
+    } else if (line.includes("LEAP SECONDS")) {
+      // 仅作信息保存，不参与计算
+      navigationData.header.leapSeconds = Number.parseInt(line.substring(0, 6).trim(), 10) || 0
+    } else if (line.includes("END OF HEADER")) {
+      i++
+      break
+    }
+  }
 
-    lineIndex++
+  // RINEX 2 仅支持 GPS 导航文件；GLONASS（type 为 G）直接报错
+  if (version > 0 && version < 3) {
+    const ft = navigationData.header.fileType.toUpperCase()
+    const sys = navigationData.header.satelliteSystem.toUpperCase()
+    if (ft.startsWith("G") || ft.includes("GLONASS") || sys.startsWith("R")) {
+      throw new Error("暂不支持 RINEX 2 GLONASS 导航文件（广播星历需要数值积分），请改用 RINEX 3 混合导航文件")
+    }
+  }
+
+  // ---- 数据记录解析 ----
+  while (i < lines.length) {
+    const line = lines[i]
+    i++
+    if (line.trim() === "") continue
+
+    if (version >= 3) {
+      // RINEX 3：行首为系统字符 + 两位 PRN，如 G01 / C21
+      const m = line.match(/^([GECJRS])(\d{2}) /)
+      if (!m) continue
+      const sys = m[1]
+      if (sys === "R" || sys === "S") {
+        // GLONASS / SBAS：历元行 + 3 行续行，跳过（需要数值积分，超出本工具范围）
+        i += 3
+        navigationData.skippedSatellites++
+        continue
+      }
+
+      // 历元字段：年 月 日 时 分 秒（空格分隔，位于数据字段之前）
+      const epochParts = line.substring(4, 23).trim().split(/\s+/)
+      if (epochParts.length < 6) {
+        navigationData.droppedRecords++
+        i += 7
+        continue
+      }
+      const year = Number.parseInt(epochParts[0], 10)
+      const month = Number.parseInt(epochParts[1], 10)
+      const day = Number.parseInt(epochParts[2], 10)
+      const hour = Number.parseInt(epochParts[3], 10)
+      const minute = Number.parseInt(epochParts[4], 10)
+      const second = Number.parseFloat(epochParts[5])
+      // 用 Date.UTC 计算毫秒数，避免时区与 Safari 日期字符串解析问题
+      const epochMs = Date.UTC(year, month - 1, day, hour, minute, Math.trunc(second))
+
+      // 历元行数据部分（索引 23 起）：af0 af1 af2
+      const values = tokenizeNumbers(line.substring(23))
+      // 7 行续行，每行 4 个字段
+      for (let k = 0; k < 7 && i < lines.length; k++, i++) {
+        values.push(...tokenizeNumbers(lines[i]))
+      }
+      addRecord(navigationData, line.substring(0, 3), sys, epochMs, values)
+    } else {
+      // RINEX 2：历元行为 可选空格 + 1-2 位 PRN + 6 个时间字段（两位年）
+      const head = line.substring(0, 22).trim().split(/\s+/)
+      const isEpochLine =
+        head.length === 7 &&
+        head.every((t) => /^\d{1,4}(\.\d+)?$/.test(t)) &&
+        head[0].length <= 2 &&
+        head[1].length <= 2 &&
+        /^ {0,2}\d/.test(line)
+      if (!isEpochLine) continue
+
+      const prn = Number.parseInt(head[0], 10)
+      const yy = Number.parseInt(head[1], 10)
+      // 两位年 pivot：>= 80 → 19yy，否则 20yy
+      const year = yy >= 80 ? 1900 + yy : 2000 + yy
+      const month = Number.parseInt(head[2], 10)
+      const day = Number.parseInt(head[3], 10)
+      const hour = Number.parseInt(head[4], 10)
+      const minute = Number.parseInt(head[5], 10)
+      const second = Number.parseFloat(head[6])
+      const epochMs = Date.UTC(year, month - 1, day, hour, minute, Math.trunc(second))
+
+      // 历元行数据部分（索引 22 起）：af0 af1 af2
+      const values = tokenizeNumbers(line.substring(22))
+      for (let k = 0; k < 7 && i < lines.length; k++, i++) {
+        values.push(...tokenizeNumbers(lines[i]))
+      }
+      // RINEX 2 GPS 导航文件，统一按 GPS 处理
+      addRecord(navigationData, `G${String(prn).padStart(2, "0")}`, "G", epochMs, values)
+    }
   }
 
   return navigationData
 }
 
 /**
+ * 按 GPS ICD-200 / BDS ICD 的开普勒轨道模型计算卫星位置和钟差
+ * @param eph 星历记录
+ * @param tMs 计算时刻，毫秒数，卫星系统自身时间尺度（GPST 或 BDT）
+ * @returns ECEF 坐标（米）与钟差（秒）
+ */
+export function propagateSatellite(eph: Ephemeris, tMs: number): { x: number; y: number; z: number; clock: number } {
+  const params = SYSTEM_PARAMS[eph.system] ?? SYSTEM_PARAMS.G
+  const d = eph.data
+
+  const af0 = d[0]
+  const af1 = d[1]
+  const af2 = d[2]
+  const Crs = d[4]
+  const deltaN = d[5]
+  const M0 = d[6]
+  const Cuc = d[7]
+  const e = d[8]
+  const Cus = d[9]
+  const sqrtA = d[10]
+  const toe = d[11]
+  const Cic = d[12]
+  const OMEGA0 = d[13]
+  const Cis = d[14]
+  const i0 = d[15]
+  const Crc = d[16]
+  const omega = d[17]
+  const OMEGADOT = d[18]
+  const IDOT = d[19]
+  const TGD = d[25] // BDS 为 TGD1
+
+  // toe 对应的毫秒时刻：记录历元所在周的周起点 + toe
+  const weekStartMs = params.epochMs + Math.floor((eph.epochMs - params.epochMs) / WEEK_MS) * WEEK_MS
+  const toeMs = weekStartMs + toe * 1000
+
+  // 相对 toe 的时间差，并做半周回绕
+  let tk = (tMs - toeMs) / 1000
+  if (tk > HALF_WEEK_S) tk -= 604800
+  else if (tk < -HALF_WEEK_S) tk += 604800
+
+  const A = sqrtA * sqrtA
+  const n0 = Math.sqrt(params.mu / (A * A * A))
+  const n = n0 + deltaN
+  const Mk = M0 + n * tk
+
+  // 迭代解开普勒方程 Ek = Mk + e*sin(Ek)
+  let Ek = Mk
+  for (let k = 0; k < 10; k++) {
+    Ek = Mk + e * Math.sin(Ek)
+  }
+  const sinE = Math.sin(Ek)
+  const cosE = Math.cos(Ek)
+
+  const nuk = Math.atan2(Math.sqrt(1 - e * e) * sinE, cosE - e)
+  const phik = nuk + omega
+  const sin2p = Math.sin(2 * phik)
+  const cos2p = Math.cos(2 * phik)
+  const duk = Cus * sin2p + Cuc * cos2p
+  const drk = Crs * sin2p + Crc * cos2p
+  const dik = Cis * sin2p + Cic * cos2p
+
+  const uk = phik + duk
+  const rk = A * (1 - e * cosE) + drk
+  const ik = i0 + dik + IDOT * tk
+  const xOp = rk * Math.cos(uk)
+  const yOp = rk * Math.sin(uk)
+
+  const OMEGAk = OMEGA0 + (OMEGADOT - params.omegaE) * tk - params.omegaE * toe
+
+  // ECEF 坐标（米）
+  const x = xOp * Math.cos(OMEGAk) - yOp * Math.cos(ik) * Math.sin(OMEGAk)
+  const y = xOp * Math.sin(OMEGAk) + yOp * Math.cos(ik) * Math.cos(OMEGAk)
+  const z = yOp * Math.sin(ik)
+
+  // 钟差（秒）：相对 toc 的时间差，同样做半周回绕
+  let dt = (tMs - eph.epochMs) / 1000
+  if (dt > HALF_WEEK_S) dt -= 604800
+  else if (dt < -HALF_WEEK_S) dt += 604800
+  const dtr = F_REL * e * sqrtA * sinE
+  const clock = af0 + af1 * dt + af2 * dt * dt + dtr - TGD
+
+  return { x, y, z, clock }
+}
+
+/**
+ * 按卫星分组并将其星历记录按历元排序（用于最近星历查找）
+ */
+function groupBySatellite(ephemerides: Ephemeris[]): Map<string, Ephemeris[]> {
+  const map = new Map<string, Ephemeris[]>()
+  for (const eph of ephemerides) {
+    const list = map.get(eph.satellite)
+    if (list) list.push(eph)
+    else map.set(eph.satellite, [eph])
+  }
+  for (const list of map.values()) {
+    list.sort((a, b) => a.epochMs - b.epochMs)
+  }
+  return map
+}
+
+/**
+ * 二分查找最接近指定时刻的星历记录
+ */
+function findClosestEphemeris(sorted: Ephemeris[], tMs: number): Ephemeris | undefined {
+  if (sorted.length === 0) return undefined
+  let lo = 0
+  let hi = sorted.length - 1
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1
+    if (sorted[mid].epochMs < tMs) lo = mid + 1
+    else hi = mid
+  }
+  // lo 为第一个 epochMs >= tMs 的位置，比较 lo 与 lo-1
+  let best = sorted[lo]
+  if (lo > 0 && Math.abs(sorted[lo - 1].epochMs - tMs) <= Math.abs(best.epochMs - tMs)) {
+    best = sorted[lo - 1]
+  }
+  return best
+}
+
+/**
  * 将广播星历数据转换为 SP3 格式数据
  * @param rinexData RINEX 导航数据
  * @param interval 历元间隔（秒）
- * @returns SP3 格式数据
+ * @returns SP3 格式数据（位置千米、钟差微秒，时间轴为 GPST）
  */
 export function convertBroadcastToSP3(rinexData: RINEXNavigationData, interval: number): SP3Data {
+  if (!Number.isFinite(interval) || interval <= 0) {
+    throw new Error("历元间隔必须是大于 0 的有限数值")
+  }
+
   const sp3Data: SP3Data = {
     header: {
       version: "d",
       startEpoch: "",
+      startEpochMs: 0,
       numberOfEpochs: 0,
       dataUsed: "BROADCAST",
       coordinateSystem: "IGS14",
@@ -159,130 +400,90 @@ export function convertBroadcastToSP3(rinexData: RINEXNavigationData, interval: 
     return sp3Data
   }
 
-  // 提取所有卫星ID
   const satellites = [...new Set(rinexData.ephemerides.map((eph) => eph.satellite))]
   sp3Data.header.satellites = satellites
+  const bySatellite = groupBySatellite(rinexData.ephemerides)
 
-  // 确定起始历元
-  sp3Data.header.startEpoch = rinexData.ephemerides[0].epoch
+  // 输出时间轴使用 GPST 毫秒：BDS 记录的历元（BDT）需加 14 秒换算到 GPST
+  const toGpstMs = (eph: Ephemeris) => (eph.system === "C" ? eph.epochMs + BDT_GPST_OFFSET_MS : eph.epochMs)
+  let startMs = Number.POSITIVE_INFINITY
+  let endMs = Number.NEGATIVE_INFINITY
+  for (const eph of rinexData.ephemerides) {
+    const g = toGpstMs(eph)
+    if (g < startMs) startMs = g
+    if (g > endMs) endMs = g
+  }
 
-  // 计算历元数
-  const startTime = new Date(rinexData.ephemerides[0].epoch).getTime()
-  const endTime = new Date(rinexData.ephemerides[rinexData.ephemerides.length - 1].epoch).getTime()
-  const numberOfEpochs = Math.floor((endTime - startTime) / (interval * 1000)) + 1
+  const stepMs = interval * 1000
+  const numberOfEpochs = Math.floor((endMs - startMs) / stepMs) + 1
+  // 限制历元总数，防止浏览器卡死
+  if (numberOfEpochs > 100000) {
+    throw new Error(`历元总数 ${numberOfEpochs} 超过上限 100000，请增大历元间隔`)
+  }
   sp3Data.header.numberOfEpochs = numberOfEpochs
+  sp3Data.header.startEpochMs = startMs
+  sp3Data.header.startEpoch = formatEpochMs(startMs)
 
-  // 生成历元数据
-  for (let i = 0; i < numberOfEpochs; i++) {
-    const epochTime = new Date(startTime + i * interval * 1000)
-    const epochStr = `${epochTime.getFullYear()} ${String(epochTime.getMonth() + 1).padStart(2, "0")} ${String(epochTime.getDate()).padStart(2, "0")} ${String(epochTime.getHours()).padStart(2, "0")} ${String(epochTime.getMinutes()).padStart(2, "0")} ${String(epochTime.getSeconds()).padStart(2, "0")}`
+  // 最近星历允许的最大时间差：4 小时
+  const MAX_EPH_DIFF_MS = 4 * 3600 * 1000
 
-    const sp3Record: SP3Record = {
-      epoch: epochStr,
+  for (let k = 0; k < numberOfEpochs; k++) {
+    const tGpst = startMs + k * stepMs
+    const record: SP3Record = {
+      epochMs: tGpst,
+      epoch: formatEpochMs(tGpst),
       satellites: [],
     }
 
     for (const satId of satellites) {
-      // 查找最接近当前历元的星历数据
-      const closestEphemeris = findClosestEphemeris(rinexData.ephemerides, satId, epochTime)
+      const list = bySatellite.get(satId)
+      if (!list) continue
+      // 换算到卫星系统自身时间尺度：BDS 卫星用 BDT = GPST - 14s
+      const system = satId.charAt(0)
+      const tSys = system === "C" ? tGpst - BDT_GPST_OFFSET_MS : tGpst
 
-      if (closestEphemeris) {
-        // 使用开普勒轨道模型计算卫星位置 (简化)
-        const { x, y, z, clock } = calculateSatellitePosition(closestEphemeris, epochTime)
+      const closest = findClosestEphemeris(list, tSys)
+      if (!closest) continue
+      if (Math.abs(closest.epochMs - tSys) > MAX_EPH_DIFF_MS) continue
 
-        sp3Record.satellites.push({
-          id: satId,
-          x: x,
-          y: y,
-          z: z,
-          clock: clock,
-        })
-      }
+      const { x, y, z, clock } = propagateSatellite(closest, tSys)
+      record.satellites.push({
+        id: satId,
+        // SP3 位置单位为千米，钟差单位为微秒
+        x: x / 1000,
+        y: y / 1000,
+        z: z / 1000,
+        clock: clock * 1e6,
+      })
     }
 
-    sp3Data.records.push(sp3Record)
+    sp3Data.records.push(record)
   }
 
   return sp3Data
 }
 
 /**
- * 查找最接近给定卫星和时间的星历数据
- * @param ephemerides 星历数据列表
- * @param satellite 卫星ID
- * @param time 时间
- * @returns 最接近的星历数据
+ * 由毫秒数生成格式化历元字符串（使用 UTC getter，不做时区转换）
  */
-function findClosestEphemeris(ephemerides: Ephemeris[], satellite: string, time: Date): Ephemeris | undefined {
-  let closest: Ephemeris | undefined
-  let minDiff = Number.POSITIVE_INFINITY
-
-  for (const eph of ephemerides) {
-    if (eph.satellite === satellite) {
-      const ephTime = new Date(eph.epoch).getTime()
-      const diff = Math.abs(ephTime - time.getTime())
-
-      if (diff < minDiff) {
-        minDiff = diff
-        closest = eph
-      }
-    }
-  }
-
-  return closest
+function formatEpochMs(ms: number): string {
+  const d = new Date(ms)
+  const sec = d.getUTCSeconds() + d.getUTCMilliseconds() / 1000
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")} ${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}:${sec.toFixed(2).padStart(5, "0")}`
 }
 
 /**
- * 使用开普勒轨道模型计算卫星位置 (简化)
- * @param ephemeris 星历数据
- * @param time 时间
- * @returns 卫星位置坐标
+ * 计算给定 GPST 毫秒时刻的 GPS 周和周内秒（保留小数秒）
+ * @param tMs GPST 毫秒数
+ * @returns GPS 周和周内秒
  */
-function calculateSatellitePosition(
-  ephemeris: Ephemeris,
-  time: Date,
-): { x: number; y: number; z: number; clock: number } {
-  // 这里只是一个占位符，实际计算需要使用开普勒轨道方程
-  return {
-    x: (Math.random() * 10000000) / 1000, // 转换为千米
-    y: (Math.random() * 10000000) / 1000,
-    z: (Math.random() * 10000000) / 1000,
-    clock: Math.random() * 1000,
-  }
-}
-
-/**
- * 计算给定日期的GPS周和周内秒
- * @param date 日期对象
- * @returns GPS周和周内秒（整天秒数）
- */
-function calculateGPSWeekAndSeconds(date: Date): { week: number; seconds: number } {
-  // GPS时间起点：1980年1月6日00:00:00 UTC
-  const GPS_EPOCH = new Date("1980-01-06T00:00:00Z")
-  // 一周的秒数：7天 * 24小时 * 60分钟 * 60秒
-  const SECONDS_IN_WEEK = 7 * 24 * 60 * 60
-  // 一天的秒数：24小时 * 60分钟 * 60秒
-  const SECONDS_IN_DAY = 24 * 60 * 60
-
-  // 计算从GPS起始时间到给定时间的毫秒数
-  const msFromEpoch = date.getTime() - GPS_EPOCH.getTime()
-
-  // 计算GPS周：总毫秒数除以一周的毫秒数并向下取整
-  const week = Math.floor(msFromEpoch / (SECONDS_IN_WEEK * 1000))
-
-  // 计算周内秒：总秒数对一周的秒数取模
-  const totalSeconds = Math.floor(msFromEpoch / 1000)
-  const secondsOfWeek = totalSeconds % SECONDS_IN_WEEK
-
-  // 计算周内天数，并转换为对应的秒数
-  // 注意：需要加1来修正差一天的问题
-  const dayOfWeek = Math.floor(secondsOfWeek / SECONDS_IN_DAY)
-  // 如果需要，可以在这里加1修正差一天的问题
-  const adjustedDayOfWeek = (dayOfWeek + 1) % 7
-  const seconds = adjustedDayOfWeek * SECONDS_IN_DAY
-
+export function calculateGPSWeekAndSeconds(tMs: number): { week: number; seconds: number } {
+  const diffMs = tMs - GPS_EPOCH_MS
+  const week = Math.floor(diffMs / WEEK_MS)
+  const seconds = diffMs / 1000 - week * 604800
   return { week, seconds }
 }
+
 /**
  * 生成SP3文件内容
  * @param sp3Data SP3数据
@@ -291,58 +492,28 @@ function calculateGPSWeekAndSeconds(date: Date): { week: number; seconds: number
 export function generateSP3Content(sp3Data: SP3Data): string {
   let content = ""
 
-  // 解析开始历元
-  let startEpochDate: Date
-  try {
-    startEpochDate = new Date(sp3Data.header.startEpoch)
-  } catch (e) {
-    // 如果解析失败，使用当前时间
-    console.warn("Failed to parse start epoch, using current time instead")
-    startEpochDate = new Date()
-  }
+  // 起始历元毫秒数（优先使用存储的毫秒值，缺失时退化为当前时间）
+  const startEpochMs =
+    sp3Data.header.startEpochMs ||
+    (sp3Data.records.length > 0 ? sp3Data.records[0].epochMs : Date.now())
+  const startEpochDate = new Date(startEpochMs)
 
   // 计算GPS周和周内秒
-  const { week: gpsWeek, seconds: gpsSecond } = calculateGPSWeekAndSeconds(startEpochDate)
+  const { week: gpsWeek, seconds: gpsSecond } = calculateGPSWeekAndSeconds(startEpochMs)
 
-  const year = startEpochDate.getFullYear().toString()
-  const month = (startEpochDate.getMonth() + 1).toString().padStart(2, "0")
-  const day = startEpochDate.getDate().toString().padStart(2, "0")
-  const hour = startEpochDate.getHours().toString().padStart(2, "0")
-  const minute = startEpochDate.getMinutes().toString().padStart(2, "0")
-  const second = startEpochDate.getSeconds().toFixed(8)
+  const year = startEpochDate.getUTCFullYear().toString()
+  const month = (startEpochDate.getUTCMonth() + 1).toString().padStart(2, "0")
+  const day = startEpochDate.getUTCDate().toString().padStart(2, "0")
+  const hour = startEpochDate.getUTCHours().toString().padStart(2, "0")
+  const minute = startEpochDate.getUTCMinutes().toString().padStart(2, "0")
+  const second = (startEpochDate.getUTCSeconds() + startEpochDate.getUTCMilliseconds() / 1000).toFixed(8)
 
-  // 计算历元间隔（秒）
+  // 计算历元间隔（秒）：直接由相邻历元的毫秒数相减
   let interval = 900 // 默认15分钟
   if (sp3Data.records.length > 1) {
-    try {
-      const time1Parts = sp3Data.records[0].epoch.split(/\s+/)
-      const time2Parts = sp3Data.records[1].epoch.split(/\s+/)
-
-      if (time1Parts.length >= 6 && time2Parts.length >= 6) {
-        const date1 = new Date(
-          Number(time1Parts[0]),
-          Number(time1Parts[1]) - 1,
-          Number(time1Parts[2]),
-          Number(time1Parts[3]),
-          Number(time1Parts[4]),
-          Number(time1Parts[5]),
-        )
-
-        const date2 = new Date(
-          Number(time2Parts[0]),
-          Number(time2Parts[1]) - 1,
-          Number(time2Parts[2]),
-          Number(time2Parts[3]),
-          Number(time2Parts[4]),
-          Number(time2Parts[5]),
-        )
-
-        if (!isNaN(date1.getTime()) && !isNaN(date2.getTime())) {
-          interval = Math.round((date2.getTime() - date1.getTime()) / 1000)
-        }
-      }
-    } catch (e) {
-      console.warn("Failed to calculate interval, using default value")
+    const diff = (sp3Data.records[1].epochMs - sp3Data.records[0].epochMs) / 1000
+    if (Number.isFinite(diff) && diff > 0) {
+      interval = diff
     }
   }
 
@@ -369,18 +540,21 @@ export function generateSP3Content(sp3Data: SP3Data): string {
   line1 += " d+D IGS14 FIT GNSS"
   content += line1.substring(0, 60).padEnd(60, " ") + "\n"
 
-  // 第二行 - GPS周、周内秒、历元间隔
+  // 第二行 - GPS周、周内秒、历元间隔、约化儒略日及天内秒
+  const dayMs = 86400000
+  const modifiedJulianDay = Math.floor(startEpochMs / dayMs) + 40587
+  const secondsOfDay = ((startEpochMs % dayMs) + dayMs) % dayMs / 1000
   let line2 = "## "
   line2 += gpsWeek.toString().padStart(4, " ") + " "
-  line2 += gpsSecond.toString().padStart(6, " ") + ".00000000"
+  line2 += gpsSecond.toFixed(8).padStart(15, " ")
 
   // 确保interval在第27列开始，保留8位小数
   while (line2.length < 26) {
     line2 += " "
   }
-  line2 += interval.toFixed(8).padStart(9, " ") + " " // 使用实际的间隔值
-  line2 += "     " // 儒略日部分使用5个空格
-  line2 += " 0.0000000000000" // 空格加天内秒
+  line2 += interval.toFixed(8).padStart(9, " ") + " "
+  line2 += modifiedJulianDay.toString().padStart(5, " ") + " "
+  line2 += secondsOfDay.toFixed(13).padStart(15, " ")
   content += line2.substring(0, 60).padEnd(60, " ") + "\n"
 
   // 卫星列表 - 每行最多17颗卫星，"+ "和"++"行总共限制在10行
@@ -464,17 +638,17 @@ export function generateSP3Content(sp3Data: SP3Data): string {
 
   // 添加历元和卫星位置数据
   sp3Data.records.forEach((record) => {
-    // 历元行
-    const epochParts = record.epoch.split(" ")
-    const eYear = epochParts[0].padStart(4, " ")
-    const eMonth = epochParts[1].padStart(2, " ")
-    const eDay = epochParts[2].padStart(2, " ")
-    const eHour = epochParts[3].padStart(2, " ")
-    const eMinute = epochParts[4].padStart(2, " ")
-    const eSecond = epochParts[5].padStart(11, " ")
+    // 历元行：由毫秒值按 UTC 格式化
+    const d = new Date(record.epochMs)
+    const eYear = d.getUTCFullYear().toString().padStart(4, " ")
+    const eMonth = (d.getUTCMonth() + 1).toString().padStart(2, " ")
+    const eDay = d.getUTCDate().toString().padStart(2, " ")
+    const eHour = d.getUTCHours().toString().padStart(2, " ")
+    const eMinute = d.getUTCMinutes().toString().padStart(2, " ")
 
     // 确保秒是11位，包括小数点后8位
-    const formattedSecond = Number(eSecond).toFixed(8).padStart(11, " ")
+    const sec = d.getUTCSeconds() + d.getUTCMilliseconds() / 1000
+    const formattedSecond = sec.toFixed(8).padStart(11, " ")
     content += `*  ${eYear} ${eMonth} ${eDay} ${eHour} ${eMinute} ${formattedSecond}\n`
 
     // 卫星位置行

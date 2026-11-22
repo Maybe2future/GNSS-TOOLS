@@ -1,552 +1,1026 @@
 "use client"
 
-import { useState } from "react"
-import { Home, Calendar, Clock } from "lucide-react"
+import { useState, useCallback } from "react"
+import { motion, AnimatePresence } from "framer-motion"
+import {
+  Clock,
+  Calendar,
+  ArrowRightLeft,
+  Copy,
+  Check,
+  Info,
+  ChevronRight,
+  Globe,
+} from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import Link from "next/link"
-import { convertGPSToUTC, convertUTCToGPS, convertBDSToUTC, convertUTCToBDS } from "@/lib/gnss-utils"
-import { ThemeToggle } from "@/components/theme-toggle"
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { Calendar as CalendarComponent } from "@/components/ui/calendar"
-import { format } from "date-fns"
-import { zhCN } from "date-fns/locale"
-import { cn } from "@/lib/utils"
-import { TimePickerDemo } from "@/components/time-picker"
+import { SiteHeader } from "@/components/site-header"
+import {
+  type TimeSystem,
+  type SystemTimeFormats,
+  weekTowToAllFormats,
+  dateTimeToAllFormats,
+  doyToAllFormats,
+  convertSystemTimestampToAllSystems,
+  getMinimumCrossSystemTimestamp,
+  getSystemConfig,
+  getSystemDifferenceText,
+  systemTimestampToPhysicalMs,
+  validateDateTimeInput,
+  validateWeekTowInput,
+  type SystemConversionOptions,
+  formatWeekTow,
+  formatDateTime,
+  formatDoy,
+  isLeapYear,
+  doyToDate,
+  sodToTime,
+} from "@/lib/gnss-utils"
 
-export default function ConverterPage() {
-  // GPS 时间转换状态
-  const [gpsWeek, setGpsWeek] = useState("")
-  const [gpsTow, setGpsTow] = useState("")
-  const [gpsDate, setGpsDate] = useState<Date | undefined>(new Date())
-  const [gpsTime, setGpsTime] = useState<string>("00:00:00")
-  const [gpsCalendarMonth, setGpsCalendarMonth] = useState<Date>(new Date())
+const SYSTEMS: TimeSystem[] = ["GPS", "BDS", "TAI", "UTC"]
 
-  // 北斗时间转换状态
-  const [bdsWeek, setBdsWeek] = useState("")
-  const [bdsTow, setBdsTow] = useState("")
-  const [bdsDate, setBdsDate] = useState<Date | undefined>(new Date())
-  const [bdsTime, setBdsTime] = useState<string>("00:00:00")
-  const [bdsCalendarMonth, setBdsCalendarMonth] = useState<Date>(new Date())
+const SYSTEM_META: Record<
+  TimeSystem,
+  { label: string; color: string; bg: string; border: string; gradient: string; icon: string }
+> = {
+  GPS: {
+    label: "GPS",
+    color: "text-blue-600 dark:text-blue-400",
+    bg: "bg-blue-50 dark:bg-blue-950/30",
+    border: "border-blue-200 dark:border-blue-800",
+    gradient: "from-blue-500 to-blue-700",
+    icon: "🛰️",
+  },
+  BDS: {
+    label: "北斗 BDS",
+    color: "text-red-600 dark:text-red-400",
+    bg: "bg-red-50 dark:bg-red-950/30",
+    border: "border-red-200 dark:border-red-800",
+    gradient: "from-red-500 to-red-700",
+    icon: "🌏",
+  },
+  TAI: {
+    label: "原子时 TAI",
+    color: "text-purple-600 dark:text-purple-400",
+    bg: "bg-purple-50 dark:bg-purple-950/30",
+    border: "border-purple-200 dark:border-purple-800",
+    gradient: "from-purple-500 to-purple-700",
+    icon: "⚛️",
+  },
+  UTC: {
+    label: "UTC",
+    color: "text-cyan-600 dark:text-cyan-400",
+    bg: "bg-cyan-50 dark:bg-cyan-950/30",
+    border: "border-cyan-200 dark:border-cyan-800",
+    gradient: "from-cyan-500 to-cyan-700",
+    icon: "🌍",
+  },
+}
 
-  // 在现有的状态变量下添加两个新的状态变量来控制日期选择器的开关状态
-  const [gpsDatePickerOpen, setGpsDatePickerOpen] = useState(false)
-  const [bdsDatePickerOpen, setBdsDatePickerOpen] = useState(false)
-
-  // GPS 周内秒转换为日期时间
-  const handleGPSToDateTime = () => {
+// =============================================================================
+// 复制到剪贴板 Hook
+// =============================================================================
+function useCopy() {
+  const [copied, setCopied] = useState<string | null>(null)
+  const copy = useCallback(async (text: string, key: string) => {
     try {
-      const week = Number.parseInt(gpsWeek)
-      const tow = Number.parseInt(gpsTow)
-
-      if (isNaN(week) || isNaN(tow) || tow < 0 || tow >= 604800) {
-        throw new Error("请输入有效的GPS周和周内秒")
-      }
-
-      const date = convertGPSToUTC(week, tow)
-      setGpsDate(date)
-      setGpsCalendarMonth(date)
-      setGpsTime(
-        `${date.getHours().toString().padStart(2, "0")}:${date.getMinutes().toString().padStart(2, "0")}:${date
-          .getSeconds()
-          .toString()
-          .padStart(2, "0")}`,
-      )
-    } catch (error) {
-      if (error instanceof Error) {
-        alert(error.message)
-      } else {
-        alert("转换出错")
-      }
+      await navigator.clipboard.writeText(text)
+      setCopied(key)
+      setTimeout(() => setCopied(null), 1500)
+    } catch {
+      // ignore
     }
+  }, [])
+  return { copied, copy }
+}
+
+// =============================================================================
+// 结果展示行组件
+// =============================================================================
+function ResultRow({
+  label,
+  value,
+  copyKey,
+  copy,
+  copied,
+  highlight = false,
+}: {
+  label: string
+  value: string
+  copyKey: string
+  copy: (text: string, key: string) => void
+  copied: string | null
+  highlight?: boolean
+}) {
+  return (
+    <div
+      className={`flex items-center justify-between p-3 rounded-lg ${
+        highlight
+          ? "bg-primary/10 dark:bg-primary/20 border border-primary/20"
+          : "bg-muted/50 dark:bg-muted/20"
+      }`}
+    >
+      <div>
+        <span className="text-xs text-muted-foreground">{label}</span>
+        <div className="font-mono text-sm font-semibold mt-0.5">{value}</div>
+      </div>
+      <Button
+        variant="ghost"
+        size="icon"
+        className="h-8 w-8 shrink-0"
+        onClick={() => copy(value, copyKey)}
+      >
+        {copied === copyKey ? (
+          <Check className="h-4 w-4 text-green-500" />
+        ) : (
+          <Copy className="h-4 w-4" />
+        )}
+      </Button>
+    </div>
+  )
+}
+
+// =============================================================================
+// 根据全格式结果同步所有输入框
+// =============================================================================
+function syncAllInputs(result: SystemTimeFormats | null) {
+  if (!result) return null
+  return {
+    week: result.week.toString(),
+    tow: result.tow.toString(),
+    year: result.year.toString(),
+    month: result.month.toString(),
+    day: result.day.toString(),
+    hour: result.hour.toString(),
+    minute: result.minute.toString(),
+    second: result.second.toString(),
+    doyYear: result.year.toString(),
+    doy: result.doy.toString(),
+    doySod: result.sod.toString(),
+  }
+}
+
+// =============================================================================
+// 单系统转换面板
+// =============================================================================
+function SingleSystemConverter() {
+  const [system, setSystem] = useState<TimeSystem>("GPS")
+  const [result, setResult] = useState<SystemTimeFormats | null>(null)
+  const { copied, copy } = useCopy()
+
+  // 输入状态
+  const [inputs, setInputs] = useState({
+    week: "",
+    tow: "",
+    year: "",
+    month: "",
+    day: "",
+    hour: "",
+    minute: "",
+    second: "",
+    doyYear: "",
+    doy: "",
+    doySod: "",
+  })
+
+  const [lastInputSource, setLastInputSource] = useState<"week" | "datetime" | "doy" | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  const applyResult = (r: SystemTimeFormats, source: "week" | "datetime" | "doy") => {
+    setResult(r)
+    setInputs((prev) => ({ ...prev, ...syncAllInputs(r)! }))
+    setLastInputSource(source)
+    setError(null)
   }
 
-  // 日期时间转换为GPS周内秒
-  const handleDateTimeToGPS = () => {
+  const rejectInput = (message: string) => {
+    setResult(null)
+    setError(message)
+    return false
+  }
+
+  // 从周+周内秒计算并同步
+  const updateFromWeekTow = (wStr: string, tStr: string) => {
+    if (wStr === "" || tStr === "") {
+      setResult(null)
+      setError(null)
+      return false
+    }
     try {
-      if (!gpsDate) {
-        throw new Error("请选择有效的日期")
-      }
-
-      const [hours, minutes, seconds] = gpsTime.split(":").map(Number)
-
-      const date = new Date(gpsDate)
-      date.setHours(hours || 0)
-      date.setMinutes(minutes || 0)
-      date.setSeconds(seconds || 0)
-
-      if (isNaN(date.getTime())) {
-        throw new Error("无效的日期或时间格式")
-      }
-
-      const { week, tow } = convertUTCToGPS(date)
-      setGpsWeek(week.toString())
-      setGpsTow(tow.toString())
-    } catch (error) {
-      if (error instanceof Error) {
-        alert(error.message)
-      } else {
-        alert("转换出错")
-      }
+      applyResult(weekTowToAllFormats(system, Number(wStr), Number(tStr)), "week")
+      return true
+    } catch (cause) {
+      return rejectInput(cause instanceof Error ? cause.message : "周秒输入无效")
     }
   }
 
-  // 北斗周内秒转换为日期时间
-  const handleBDSToDateTime = () => {
+  // 从年月日时分秒计算并同步
+  const updateFromDateTime = (y: string, m: string, d: string, h: string, min: string, s: string) => {
+    if ([y, m, d, h, min, s].some((value) => value === "")) {
+      setResult(null)
+      setError(null)
+      return false
+    }
     try {
-      const week = Number.parseInt(bdsWeek)
-      const tow = Number.parseInt(bdsTow)
-
-      if (isNaN(week) || isNaN(tow) || tow < 0 || tow >= 604800) {
-        throw new Error("请输入有效的北斗周和周内秒")
-      }
-
-      const date = convertBDSToUTC(week, tow)
-      setBdsDate(date)
-      setBdsCalendarMonth(date)
-      setBdsTime(
-        `${date.getHours().toString().padStart(2, "0")}:${date.getMinutes().toString().padStart(2, "0")}:${date
-          .getSeconds()
-          .toString()
-          .padStart(2, "0")}`,
-      )
-    } catch (error) {
-      if (error instanceof Error) {
-        alert(error.message)
-      } else {
-        alert("转换出错")
-      }
+      applyResult(dateTimeToAllFormats(system, Number(y), Number(m), Number(d), Number(h), Number(min), Number(s)), "datetime")
+      return true
+    } catch (cause) {
+      return rejectInput(cause instanceof Error ? cause.message : "日历时间输入无效")
     }
   }
 
-  // 日期时间转换为北斗周内秒
-  const handleDateTimeToBDS = () => {
+  // 从年积日计算并同步
+  const updateFromDoy = (y: string, d: string, s: string) => {
+    if ([y, d, s].some((value) => value === "")) {
+      setResult(null)
+      setError(null)
+      return false
+    }
     try {
-      if (!bdsDate) {
-        throw new Error("请选择有效的日期")
-      }
+      applyResult(doyToAllFormats(system, Number(y), Number(d), Number(s)), "doy")
+      return true
+    } catch (cause) {
+      return rejectInput(cause instanceof Error ? cause.message : "年积日输入无效")
+    }
+  }
 
-      const [hours, minutes, seconds] = bdsTime.split(":").map(Number)
+  const meta = SYSTEM_META[system]
+  const cfg = getSystemConfig(system)
 
-      const date = new Date(bdsDate)
-      date.setHours(hours || 0)
-      date.setMinutes(minutes || 0)
-      date.setSeconds(seconds || 0)
+  return (
+    <div className="space-y-6">
+      {/* 系统选择 */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        {SYSTEMS.map((s) => {
+          const active = s === system
+          const m = SYSTEM_META[s]
+          return (
+            <button
+              key={s}
+              onClick={() => {
+                setSystem(s)
+                setResult(null)
+                setInputs({
+                  week: "",
+                  tow: "",
+                  year: "",
+                  month: "",
+                  day: "",
+                  hour: "",
+                  minute: "",
+                  second: "",
+                  doyYear: "",
+                  doy: "",
+                  doySod: "",
+                })
+                setLastInputSource(null)
+                setError(null)
+              }}
+              className={`relative rounded-xl border-2 p-4 text-left transition-all duration-200 ${
+                active
+                  ? `${m.border} ${m.bg} shadow-md scale-[1.02]`
+                  : "border-border bg-card hover:bg-muted/50"
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                <span className="text-xl">{m.icon}</span>
+                <div>
+                  <div className={`font-bold ${active ? m.color : ""}`}>{m.label}</div>
+                  <div className="text-xs text-muted-foreground">
+                    {active ? "已选择" : "点击切换"}
+                  </div>
+                </div>
+              </div>
+              {active && (
+                <motion.div
+                  layoutId="activeSystem"
+                  className={`absolute inset-0 rounded-xl border-2 ${m.border}`}
+                  transition={{ type: "spring", stiffness: 300, damping: 30 }}
+                />
+              )}
+            </button>
+          )
+        })}
+      </div>
 
-      if (isNaN(date.getTime())) {
-        throw new Error("无效的日期或时间格式")
-      }
+      {/* 三个输入区域 */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* 周 + 周内秒 */}
+        <Card className={`${meta.bg} overflow-hidden`}>
+          <CardHeader className="pb-3">
+            <CardTitle className={`text-lg flex items-center gap-2 ${meta.color}`}>
+              <Clock className="h-5 w-5" />
+              周 + 周内秒
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <Label>周数 (Week)</Label>
+              <Input
+                type="number"
+                placeholder="例如: 2415"
+                value={inputs.week}
+                onChange={(e) => {
+                  const val = e.target.value
+                  setInputs((prev) => ({ ...prev, week: val }))
+                  if (inputs.tow !== "") updateFromWeekTow(val, inputs.tow)
+                }}
+                className="bg-white/80 dark:bg-gray-950/80"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>周内秒 (TOW)</Label>
+              <Input
+                type="number"
+                placeholder="0 ~ 604799"
+                value={inputs.tow}
+                onChange={(e) => {
+                  const val = e.target.value
+                  setInputs((prev) => ({ ...prev, tow: val }))
+                  if (inputs.week !== "") updateFromWeekTow(inputs.week, val)
+                }}
+                className="bg-white/80 dark:bg-gray-950/80"
+              />
+              <p className="text-xs text-muted-foreground">
+                范围: 0 ~ 604799（一周总秒数）
+              </p>
+            </div>
+          </CardContent>
+        </Card>
 
-      const { week, tow } = convertUTCToBDS(date)
-      setBdsWeek(week.toString())
-      setBdsTow(tow.toString())
-    } catch (error) {
-      if (error instanceof Error) {
-        alert(error.message)
+        {/* 年月日时分秒 */}
+        <Card className={`${meta.bg} overflow-hidden`}>
+          <CardHeader className="pb-3">
+            <CardTitle className={`text-lg flex items-center gap-2 ${meta.color}`}>
+              <Calendar className="h-5 w-5" />
+              年月日时分秒
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="grid grid-cols-3 gap-2">
+              <div className="space-y-1">
+                <Label className="text-xs">年</Label>
+                <Input
+                  type="number"
+                  placeholder="2026"
+                  value={inputs.year}
+                  onChange={(e) => {
+                    const val = e.target.value
+                    setInputs((prev) => ({ ...prev, year: val }))
+                    updateFromDateTime(val, inputs.month, inputs.day, inputs.hour, inputs.minute, inputs.second)
+                  }}
+                  className="bg-white/80 dark:bg-gray-950/80"
+                />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">月</Label>
+                <Input
+                  type="number"
+                  placeholder="1"
+                  min={1}
+                  max={12}
+                  value={inputs.month}
+                  onChange={(e) => {
+                    const val = e.target.value
+                    setInputs((prev) => ({ ...prev, month: val }))
+                    updateFromDateTime(inputs.year, val, inputs.day, inputs.hour, inputs.minute, inputs.second)
+                  }}
+                  className="bg-white/80 dark:bg-gray-950/80"
+                />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">日</Label>
+                <Input
+                  type="number"
+                  placeholder="1"
+                  min={1}
+                  max={31}
+                  value={inputs.day}
+                  onChange={(e) => {
+                    const val = e.target.value
+                    setInputs((prev) => ({ ...prev, day: val }))
+                    updateFromDateTime(inputs.year, inputs.month, val, inputs.hour, inputs.minute, inputs.second)
+                  }}
+                  className="bg-white/80 dark:bg-gray-950/80"
+                />
+              </div>
+            </div>
+            <div className="grid grid-cols-3 gap-2">
+              <div className="space-y-1">
+                <Label className="text-xs">时</Label>
+                <Input
+                  type="number"
+                  placeholder="0"
+                  min={0}
+                  max={23}
+                  value={inputs.hour}
+                  onChange={(e) => {
+                    const val = e.target.value
+                    setInputs((prev) => ({ ...prev, hour: val }))
+                    updateFromDateTime(inputs.year, inputs.month, inputs.day, val, inputs.minute, inputs.second)
+                  }}
+                  className="bg-white/80 dark:bg-gray-950/80"
+                />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">分</Label>
+                <Input
+                  type="number"
+                  placeholder="0"
+                  min={0}
+                  max={59}
+                  value={inputs.minute}
+                  onChange={(e) => {
+                    const val = e.target.value
+                    setInputs((prev) => ({ ...prev, minute: val }))
+                    updateFromDateTime(inputs.year, inputs.month, inputs.day, inputs.hour, val, inputs.second)
+                  }}
+                  className="bg-white/80 dark:bg-gray-950/80"
+                />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">秒</Label>
+                <Input
+                  type="number"
+                  placeholder="0"
+                  min={0}
+                  max={system === "UTC" ? 60 : 59}
+                  value={inputs.second}
+                  onChange={(e) => {
+                    const val = e.target.value
+                    setInputs((prev) => ({ ...prev, second: val }))
+                    updateFromDateTime(inputs.year, inputs.month, inputs.day, inputs.hour, inputs.minute, val)
+                  }}
+                  className="bg-white/80 dark:bg-gray-950/80"
+                />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* 年积日 */}
+        <Card className={`${meta.bg} overflow-hidden`}>
+          <CardHeader className="pb-3">
+            <CardTitle className={`text-lg flex items-center gap-2 ${meta.color}`}>
+              <Globe className="h-5 w-5" />
+              年积日 + 日内秒
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-2 gap-2">
+              <div className="space-y-1">
+                <Label className="text-xs">年份</Label>
+                <Input
+                  type="number"
+                  placeholder="2026"
+                  value={inputs.doyYear}
+                  onChange={(e) => {
+                    const val = e.target.value
+                    setInputs((prev) => ({ ...prev, doyYear: val }))
+                    updateFromDoy(val, inputs.doy, inputs.doySod)
+                  }}
+                  className="bg-white/80 dark:bg-gray-950/80"
+                />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">年积日 (DOY)</Label>
+                <Input
+                  type="number"
+                  placeholder="1 ~ 366"
+                  min={1}
+                  max={366}
+                  value={inputs.doy}
+                  onChange={(e) => {
+                    const val = e.target.value
+                    setInputs((prev) => ({ ...prev, doy: val }))
+                    updateFromDoy(inputs.doyYear, val, inputs.doySod)
+                  }}
+                  className="bg-white/80 dark:bg-gray-950/80"
+                />
+              </div>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">日内秒 (SOD)</Label>
+              <Input
+                type="number"
+                placeholder="0 ~ 86399"
+                min={0}
+                max={system === "UTC" ? 86400 : 86399}
+                value={inputs.doySod}
+                onChange={(e) => {
+                  const val = e.target.value
+                  setInputs((prev) => ({ ...prev, doySod: val }))
+                  updateFromDoy(inputs.doyYear, inputs.doy, val)
+                }}
+                className="bg-white/80 dark:bg-gray-950/80"
+              />
+              <p className="text-xs text-muted-foreground">
+                范围: 0 ~ 86399（真实 UTC 闰日可用 86400 表示 23:59:60）
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {error && (
+        <p role="alert" className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+          {error}
+        </p>
+      )}
+
+      {/* 转换结果 */}
+      <AnimatePresence>
+        {result && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+            transition={{ duration: 0.3 }}
+          >
+            <Card className="overflow-hidden border-2 shadow-lg">
+              <div className={`h-1 bg-gradient-to-r ${meta.gradient}`} />
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <span>{meta.icon}</span>
+                  {meta.label} 转换结果
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <ResultRow
+                    label="周 + 周内秒"
+                    value={formatWeekTow(result.week, result.tow)}
+                    copyKey="result-weektow"
+                    copy={copy}
+                    copied={copied}
+                    highlight={lastInputSource === "week"}
+                  />
+                  <ResultRow
+                    label="年月日时分秒"
+                    value={formatDateTime(
+                      result.year,
+                      result.month,
+                      result.day,
+                      result.hour,
+                      result.minute,
+                      result.second
+                    )}
+                    copyKey="result-datetime"
+                    copy={copy}
+                    copied={copied}
+                    highlight={lastInputSource === "datetime"}
+                  />
+                  <ResultRow
+                    label="年积日"
+                    value={formatDoy(result.year, result.doy, result.sod)}
+                    copyKey="result-doy"
+                    copy={copy}
+                    copied={copied}
+                    highlight={lastInputSource === "doy"}
+                  />
+                </div>
+              </CardContent>
+            </Card>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* 系统信息 */}
+      <Card className="bg-muted/30">
+        <CardContent className="p-4">
+          <div className="flex items-start gap-3">
+            <Info className="h-5 w-5 text-muted-foreground mt-0.5 shrink-0" />
+            <div className="text-sm text-muted-foreground space-y-1">
+              <p>
+                <span className="font-semibold">{meta.label}</span> 起始历元:{" "}
+                {cfg.epoch.toISOString().replace("T", " ").replace(".000Z", "")} UTC
+              </p>
+              <p>
+                与 UTC 时间差（当前值）:{" "}
+                {cfg.leapSeconds > 0
+                  ? `${cfg.name} 比 UTC 快 ${cfg.leapSeconds} 秒`
+                  : cfg.leapSeconds < 0
+                    ? `${cfg.name} 比 UTC 慢 ${Math.abs(cfg.leapSeconds)} 秒`
+                    : "与 UTC 一致"}
+                ，历史日期按闰秒表自动修正
+              </p>
+              <p className="text-xs opacity-70">
+                提示：在任意输入区域输入有效值，其他两个区域将自动更新。
+                {system === "UTC" && " UTC 周秒为 POSIX 式标称值；真实闰秒以 23:59:60 单独表示。"}
+              </p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  )
+}
+
+// =============================================================================
+// 系统间转换面板
+// =============================================================================
+function CrossSystemConverter() {
+  const [sourceSystem, setSourceSystem] = useState<TimeSystem>("GPS")
+  const [inputTab, setInputTab] = useState<"week" | "datetime" | "doy">("week")
+  const [results, setResults] = useState<Record<TimeSystem, SystemTimeFormats> | null>(null)
+  const [convertedAtMs, setConvertedAtMs] = useState<number | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [showFormats, setShowFormats] = useState({ weekTow: true, dateTime: true, doy: true })
+  const { copied, copy } = useCopy()
+
+  // 三种输入状态
+  const [week, setWeek] = useState("")
+  const [tow, setTow] = useState("")
+
+  const [dtYear, setDtYear] = useState("")
+  const [dtMonth, setDtMonth] = useState("")
+  const [dtDay, setDtDay] = useState("")
+  const [dtHour, setDtHour] = useState("")
+  const [dtMinute, setDtMinute] = useState("")
+  const [dtSecond, setDtSecond] = useState("")
+
+  const [doyYear, setDoyYear] = useState("")
+  const [doyVal, setDoyVal] = useState("")
+  const [doySod, setDoySod] = useState("")
+
+  const handleConvert = () => {
+    setError(null)
+    setResults(null)
+    setConvertedAtMs(null)
+    try {
+      const cfg = getSystemConfig(sourceSystem)
+      let sourceTimestampMs: number
+      const options: SystemConversionOptions = {}
+
+      if (inputTab === "week") {
+        if (week === "" || tow === "") throw new Error("请输入周数和周内秒")
+        const w = Number(week)
+        const t = Number(tow)
+        const validationError = validateWeekTowInput(w, t)
+        if (validationError) throw new Error(validationError)
+        sourceTimestampMs = cfg.epoch.getTime() + w * 604800 * 1000 + t * 1000
+      } else if (inputTab === "datetime") {
+        if ([dtYear, dtMonth, dtDay, dtHour, dtMinute, dtSecond].some((value) => value === "")) {
+          throw new Error("请完整输入年月日时分秒")
+        }
+        const y = Number(dtYear)
+        const m = Number(dtMonth)
+        const d = Number(dtDay)
+        const h = Number(dtHour)
+        const min = Number(dtMinute)
+        const s = Number(dtSecond)
+        const validationError = validateDateTimeInput(sourceSystem, y, m, d, h, min, s)
+        if (validationError) throw new Error(validationError)
+        sourceTimestampMs = Date.UTC(y, m - 1, d, h, min, s)
+        if (sourceSystem === "UTC" && s === 60) options.utcLeapSecond = { year: y, month: m, day: d, hour: h, minute: min }
       } else {
-        alert("转换出错")
+        if ([doyYear, doyVal, doySod].some((value) => value === "")) {
+          throw new Error("请完整输入年份、年积日和日内秒")
+        }
+        const y = Number(doyYear)
+        const d = Number(doyVal)
+        const s = Number(doySod)
+        const maxDoy = isLeapYear(y) ? 366 : 365
+        if (![y, d, s].every(Number.isInteger) || y < 1000 || d < 1 || d > maxDoy || s < 0 || s > 86400) {
+          throw new Error("请输入有效的四位年份、年积日和日内秒")
+        }
+        const { month, day } = doyToDate(y, d)
+        const isLeapSod = s === 86400
+        const { hour, minute, second } = isLeapSod ? { hour: 23, minute: 59, second: 60 } : sodToTime(s)
+        const validationError = validateDateTimeInput(sourceSystem, y, month, day, hour, minute, second)
+        if (validationError) throw new Error(validationError)
+        sourceTimestampMs = Date.UTC(y, month - 1, day, hour, minute, second)
+        if (sourceSystem === "UTC" && isLeapSod) options.utcLeapSecond = { year: y, month, day, hour, minute }
       }
+
+      if (sourceTimestampMs < getMinimumCrossSystemTimestamp(sourceSystem)) {
+        throw new Error("源时刻早于该系统支持的跨系统换算范围")
+      }
+      setResults(convertSystemTimestampToAllSystems(sourceSystem, sourceTimestampMs, options))
+      setConvertedAtMs(systemTimestampToPhysicalMs(sourceSystem, sourceTimestampMs, options))
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "输入无效，请检查后重试")
     }
-  }
-
-  // 处理GPS时间变化
-  const handleGpsTimeChange = (value: string) => {
-    setGpsTime(value)
-  }
-
-  // 处理北斗时间变化
-  const handleBdsTimeChange = (value: string) => {
-    setBdsTime(value)
-  }
-
-  // 修改handleGpsDateSelect函数，在选择日期后关闭Popover
-  const handleGpsDateSelect = (date: Date | undefined) => {
-    setGpsDate(date)
-    if (date) {
-      setGpsCalendarMonth(date)
-      setGpsDatePickerOpen(false) // 选择日期后关闭Popover
-    }
-  }
-
-  // 修改handleBdsDateSelect函数，在选择日期后关闭Popover
-  const handleBdsDateSelect = (date: Date | undefined) => {
-    setBdsDate(date)
-    if (date) {
-      setBdsCalendarMonth(date)
-      setBdsDatePickerOpen(false) // 选择日期后关闭Popover
-    }
-  }
-
-  // 处理GPS年份变更
-  const handleGpsYearChange = (year: number) => {
-    const newDate = new Date(gpsCalendarMonth)
-    newDate.setFullYear(year)
-    setGpsCalendarMonth(newDate)
-  }
-
-  // 处理GPS月份变更
-  const handleGpsMonthChange = (month: number) => {
-    const newDate = new Date(gpsCalendarMonth)
-    newDate.setMonth(month)
-    setGpsCalendarMonth(newDate)
-  }
-
-  // 处理北斗年份变更
-  const handleBdsYearChange = (year: number) => {
-    const newDate = new Date(bdsCalendarMonth)
-    newDate.setFullYear(year)
-    setBdsCalendarMonth(newDate)
-  }
-
-  // 处理北斗月份变更
-  const handleBdsMonthChange = (month: number) => {
-    const newDate = new Date(bdsCalendarMonth)
-    newDate.setMonth(month)
-    setBdsCalendarMonth(newDate)
   }
 
   return (
-    <div className="min-h-screen pb-12">
-      <header className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 shadow-sm mb-8">
-        <div className="container mx-auto px-4 py-4 flex justify-between items-center">
-          <div className="flex items-center gap-4">
-            <Link href="/">
-              <Button variant="ghost" size="sm">
-                <Home className="mr-2 h-4 w-4" />
-                首页
-              </Button>
-            </Link>
-            <h1 className="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-600 to-indigo-600 dark:from-blue-400 dark:to-indigo-400">
-              GNSS 时间转换器
-            </h1>
+    <div className="space-y-6">
+      {/* 源系统选择 */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-lg flex items-center gap-2">
+            <ArrowRightLeft className="h-5 w-5" />
+            源系统与时间输入
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="space-y-2">
+            <Label>选择源时间系统</Label>
+            <div className="flex flex-wrap gap-2">
+              {SYSTEMS.map((s) => {
+                const active = s === sourceSystem
+                const m = SYSTEM_META[s]
+                return (
+                  <Button
+                    key={s}
+                    variant={active ? "default" : "outline"}
+                    onClick={() => {
+                      setSourceSystem(s)
+                      setResults(null)
+                      setConvertedAtMs(null)
+                      setError(null)
+                    }}
+                    className={`gap-1 ${active ? `bg-gradient-to-r ${m.gradient} text-white border-0` : ""}`}
+                  >
+                    <span>{m.icon}</span>
+                    {m.label}
+                  </Button>
+                )
+              })}
+            </div>
           </div>
-          <ThemeToggle />
-        </div>
-      </header>
 
-      <main className="container mx-auto px-4">
-        <Tabs defaultValue="gps" className="w-full">
-          <TabsList className="grid w-full max-w-md mx-auto grid-cols-2 mb-8">
-            <TabsTrigger value="gps">GPS 时间转换</TabsTrigger>
-            <TabsTrigger value="bds">北斗时间转换</TabsTrigger>
-          </TabsList>
+          {/* 输入格式切换 */}
+          <div className="space-y-2">
+            <Label>选择输入格式</Label>
+            <div className="flex flex-wrap gap-2">
+              {[
+                { key: "week" as const, label: "周 + 周内秒", icon: <Clock className="h-4 w-4" /> },
+                { key: "datetime" as const, label: "年月日时分秒", icon: <Calendar className="h-4 w-4" /> },
+                { key: "doy" as const, label: "年积日 + 日内秒", icon: <Globe className="h-4 w-4" /> },
+              ].map((tab) => (
+                <Button
+                  key={tab.key}
+                  variant={inputTab === tab.key ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => {
+                    setInputTab(tab.key)
+                    setResults(null)
+                    setConvertedAtMs(null)
+                    setError(null)
+                  }}
+                  className={`gap-1 ${inputTab === tab.key ? "bg-primary text-primary-foreground" : ""}`}
+                >
+                  {tab.icon}
+                  {tab.label}
+                </Button>
+              ))}
+            </div>
+          </div>
 
-          <TabsContent value="gps">
-            <Card className="converter-card max-w-4xl mx-auto">
-              <CardHeader>
-                <CardTitle className="text-center text-2xl">GPS 时间转换</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-6">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                  <div className="space-y-6 bg-white/50 dark:bg-gray-800/50 p-6 rounded-xl shadow-sm">
-                    <h3 className="font-semibold text-lg flex items-center gap-2 text-blue-700 dark:text-blue-400">
-                      <Clock className="h-5 w-5" />
-                      GPS周 → 日期时间
-                    </h3>
-                    <div className="space-y-4">
-                      <div className="space-y-2">
-                        <Label htmlFor="gps-week">GPS 周</Label>
-                        <Input
-                          id="gps-week"
-                          value={gpsWeek}
-                          onChange={(e) => setGpsWeek(e.target.value)}
-                          placeholder="例如: 2200"
-                          className="bg-white dark:bg-gray-950"
-                        />
-                      </div>
+          {/* 根据选择的格式显示对应输入框 */}
+          {inputTab === "week" && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>周数</Label>
+                <Input type="number" placeholder="例如: 2415" value={week} onChange={(e) => setWeek(e.target.value)} />
+              </div>
+              <div className="space-y-2">
+                <Label>周内秒</Label>
+                <Input type="number" placeholder="0 ~ 604799" value={tow} onChange={(e) => setTow(e.target.value)} />
+              </div>
+            </div>
+          )}
 
-                      <div className="space-y-2">
-                        <Label htmlFor="gps-tow">GPS 周内秒</Label>
-                        <Input
-                          id="gps-tow"
-                          value={gpsTow}
-                          onChange={(e) => setGpsTow(e.target.value)}
-                          placeholder="例如: 172800 (周二开始)"
-                          className="bg-white dark:bg-gray-950"
-                        />
-                      </div>
+          {inputTab === "datetime" && (
+            <div className="space-y-3">
+              <div className="grid grid-cols-3 gap-2">
+                <div className="space-y-1">
+                  <Label className="text-xs">年</Label>
+                  <Input type="number" placeholder="2026" value={dtYear} onChange={(e) => setDtYear(e.target.value)} />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">月</Label>
+                  <Input type="number" placeholder="1" min={1} max={12} value={dtMonth} onChange={(e) => setDtMonth(e.target.value)} />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">日</Label>
+                  <Input type="number" placeholder="1" min={1} max={31} value={dtDay} onChange={(e) => setDtDay(e.target.value)} />
+                </div>
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                <div className="space-y-1">
+                  <Label className="text-xs">时</Label>
+                  <Input type="number" placeholder="0" min={0} max={23} value={dtHour} onChange={(e) => setDtHour(e.target.value)} />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">分</Label>
+                  <Input type="number" placeholder="0" min={0} max={59} value={dtMinute} onChange={(e) => setDtMinute(e.target.value)} />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">秒</Label>
+                  <Input type="number" placeholder="0" min={0} max={sourceSystem === "UTC" ? 60 : 59} value={dtSecond} onChange={(e) => setDtSecond(e.target.value)} />
+                </div>
+              </div>
+            </div>
+          )}
 
-                      <Button onClick={handleGPSToDateTime} className="w-full">
-                        转换为日期时间
-                      </Button>
-                    </div>
+          {inputTab === "doy" && (
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-1">
+                  <Label className="text-xs">年份</Label>
+                  <Input type="number" placeholder="2026" value={doyYear} onChange={(e) => setDoyYear(e.target.value)} />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">年积日 (DOY)</Label>
+                  <Input type="number" placeholder="1 ~ 366" min={1} max={366} value={doyVal} onChange={(e) => setDoyVal(e.target.value)} />
+                </div>
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">日内秒 (SOD)</Label>
+                <Input type="number" placeholder="0 ~ 86399" min={0} max={sourceSystem === "UTC" ? 86400 : 86399} value={doySod} onChange={(e) => setDoySod(e.target.value)} />
+              </div>
+            </div>
+          )}
 
-                    <div className="pt-4 border-t">
-                      <div className="space-y-2">
-                        <Label>转换结果</Label>
-                        <div className="flex flex-col gap-2">
-                          <div className="flex items-center gap-2 bg-blue-50 dark:bg-blue-900/20 p-3 rounded-md">
-                            <Calendar className="h-4 w-4 text-blue-600 dark:text-blue-400" />
-                            <span>{gpsDate ? format(gpsDate, "yyyy-MM-dd", { locale: zhCN }) : "未选择日期"}</span>
-                          </div>
-                          <div className="flex items-center gap-2 bg-blue-50 dark:bg-blue-900/20 p-3 rounded-md">
-                            <Clock className="h-4 w-4 text-blue-600 dark:text-blue-400" />
-                            <span>{gpsTime || "00:00:00"}</span>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
+          {error && (
+            <p role="alert" className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+              {error}
+            </p>
+          )}
+          <Button onClick={handleConvert} className="w-full sm:w-auto">
+            <ArrowRightLeft className="mr-2 h-4 w-4" />
+            转换为各系统时间
+          </Button>
+        </CardContent>
+      </Card>
 
-                  <div className="space-y-6 bg-white/50 dark:bg-gray-800/50 p-6 rounded-xl shadow-sm">
-                    <h3 className="font-semibold text-lg flex items-center gap-2 text-blue-700 dark:text-blue-400">
-                      <Calendar className="h-5 w-5" />
-                      日期时间 → GPS周
-                    </h3>
-                    <div className="space-y-4">
-                      <div className="space-y-2">
-                        <Label>选择日期</Label>
-                        <Popover open={gpsDatePickerOpen} onOpenChange={setGpsDatePickerOpen}>
-                          <PopoverTrigger asChild>
-                            <Button
-                              variant={"outline"}
-                              className={cn(
-                                "w-full justify-start text-left font-normal bg-white dark:bg-gray-950",
-                                !gpsDate && "text-muted-foreground",
-                              )}
-                            >
-                              <Calendar className="mr-2 h-4 w-4" />
-                              {gpsDate ? format(gpsDate, "yyyy-MM-dd", { locale: zhCN }) : <span>选择日期</span>}
-                            </Button>
-                          </PopoverTrigger>
-                          <PopoverContent className="w-auto p-0" align="start">
-                            <div className="p-3 flex gap-2">
-                              <select
-                                value={gpsCalendarMonth.getFullYear()}
-                                onChange={(e) => handleGpsYearChange(Number.parseInt(e.target.value))}
-                                className="flex-1 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm"
-                              >
-                                {Array.from({ length: 2051 - 1980 }, (_, i) => 1980 + i).map((year) => (
-                                  <option key={year} value={year}>
-                                    {year}年
-                                  </option>
-                                ))}
-                              </select>
+      {/* 结果展示格式选择 */}
+      {results && (
+        <Card className="bg-muted/30">
+          <CardContent className="p-4">
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="text-sm font-medium">展示格式:</span>
+              {[
+                { key: "weekTow" as const, label: "周+周内秒" },
+                { key: "dateTime" as const, label: "年月日时分秒" },
+                { key: "doy" as const, label: "年积日" },
+              ].map((fmt) => (
+                <label key={fmt.key} className="flex items-center gap-1.5 text-sm cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={showFormats[fmt.key]}
+                    onChange={(e) =>
+                      setShowFormats((prev) => ({ ...prev, [fmt.key]: e.target.checked }))
+                    }
+                    className="rounded border-gray-300"
+                  />
+                  {fmt.label}
+                </label>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
-                              <select
-                                value={gpsCalendarMonth.getMonth()}
-                                onChange={(e) => handleGpsMonthChange(Number.parseInt(e.target.value))}
-                                className="flex-1 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm"
-                              >
-                                {Array.from({ length: 12 }, (_, i) => i).map((month) => (
-                                  <option key={month} value={month}>
-                                    {month + 1}月
-                                  </option>
-                                ))}
-                              </select>
-                            </div>
-                            <CalendarComponent
-                              mode="single"
-                              selected={gpsDate}
-                              onSelect={handleGpsDateSelect}
-                              month={gpsCalendarMonth}
-                              onMonthChange={setGpsCalendarMonth}
-                              initialFocus
-                              locale={zhCN}
+      {/* 转换结果 */}
+      <AnimatePresence>
+        {results && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+            transition={{ duration: 0.3 }}
+            className="grid grid-cols-1 md:grid-cols-2 gap-4"
+          >
+            {SYSTEMS.map((s, idx) => {
+              const r = results[s]
+              const m = SYSTEM_META[s]
+              const isSource = s === sourceSystem
+              return (
+                <motion.div
+                  key={s}
+                  initial={{ opacity: 0, scale: 0.95 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  transition={{ delay: idx * 0.1 }}
+                >
+                  <Card className={`overflow-hidden h-full ${isSource ? `border-2 ${m.border}` : ""}`}>
+                    <div className={`h-1 bg-gradient-to-r ${m.gradient}`} />
+                    <CardHeader className="pb-3">
+                      <CardTitle className="text-base flex items-center justify-between">
+                        <span className="flex items-center gap-2">
+                          <span className="text-lg">{m.icon}</span>
+                          <span className={m.color}>{m.label}</span>
+                        </span>
+                        {isSource && (
+                          <span className="text-xs bg-primary text-primary-foreground px-2 py-0.5 rounded-full">
+                            源系统
+                          </span>
+                        )}
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-2 pt-0">
+                      {r.isBeforeEpoch ? (
+                        <p className="rounded-lg bg-muted/50 px-3 py-4 text-sm text-muted-foreground">
+                          该时刻早于 {s} 系统历元，不适用。
+                        </p>
+                      ) : (
+                        <>
+                          {showFormats.weekTow && (
+                            <ResultRow
+                              label="周 + 周内秒"
+                              value={formatWeekTow(r.week, r.tow)}
+                              copyKey={`cross-${s}-weektow`}
+                              copy={copy}
+                              copied={copied}
                             />
-                          </PopoverContent>
-                        </Popover>
-                      </div>
+                          )}
+                          {showFormats.dateTime && (
+                            <ResultRow
+                              label="年月日时分秒"
+                              value={formatDateTime(r.year, r.month, r.day, r.hour, r.minute, r.second)}
+                              copyKey={`cross-${s}-datetime`}
+                              copy={copy}
+                              copied={copied}
+                            />
+                          )}
+                          {showFormats.doy && (
+                            <ResultRow
+                              label="年积日"
+                              value={formatDoy(r.year, r.doy, r.sod)}
+                              copyKey={`cross-${s}-doy`}
+                              copy={copy}
+                              copied={copied}
+                            />
+                          )}
+                          {!isSource && convertedAtMs !== null && (
+                            <div className={`text-xs p-2 rounded ${m.bg} ${m.color}`}>
+                              {getSystemDifferenceText(sourceSystem, s, convertedAtMs)}
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </CardContent>
+                  </Card>
+                </motion.div>
+              )
+            })}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  )
+}
 
-                      <div className="space-y-2">
-                        <Label>选择时间</Label>
-                        <TimePickerDemo value={gpsTime} onChange={handleGpsTimeChange} />
-                      </div>
+// =============================================================================
+// 主页面
+// =============================================================================
+export default function ConverterPage() {
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-background via-background to-muted/30">
+      <SiteHeader />
 
-                      <Button onClick={handleDateTimeToGPS} className="w-full">
-                        转换为GPS周和周内秒
-                      </Button>
-                    </div>
+      <main className="container mx-auto px-4 py-8">
+        <div className="flex items-center gap-2 mb-6">
+          <div className="h-8 w-1 rounded-full bg-gradient-to-b from-blue-500 to-purple-500" />
+          <h1 className="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-600 via-purple-600 to-cyan-600 dark:from-blue-400 dark:via-purple-400 dark:to-cyan-400">
+            GNSS 时间转换器
+          </h1>
+        </div>
+        <Tabs defaultValue="single" className="w-full">
+          <div className="flex justify-center mb-8">
+            <TabsList className="grid w-full max-w-lg grid-cols-2 p-1 bg-muted/50 backdrop-blur-sm">
+              <TabsTrigger value="single" className="gap-2 data-[state=active]:bg-white dark:data-[state=active]:bg-gray-800 data-[state=active]:shadow-sm">
+                <Clock className="h-4 w-4" />
+                单系统全格式转换
+              </TabsTrigger>
+              <TabsTrigger value="cross" className="gap-2 data-[state=active]:bg-white dark:data-[state=active]:bg-gray-800 data-[state=active]:shadow-sm">
+                <ArrowRightLeft className="h-4 w-4" />
+                系统间转换
+              </TabsTrigger>
+            </TabsList>
+          </div>
 
-                    <div className="pt-4 border-t">
-                      <div className="space-y-2">
-                        <Label>转换结果</Label>
-                        <div className="flex flex-col gap-2">
-                          <div className="flex items-center gap-2 bg-blue-50 dark:bg-blue-900/20 p-3 rounded-md">
-                            <span className="font-medium">GPS周:</span>
-                            <span className="font-bold">{gpsWeek || "-"}</span>
-                          </div>
-                          <div className="flex items-center gap-2 bg-blue-50 dark:bg-blue-900/20 p-3 rounded-md">
-                            <span className="font-medium">周内秒:</span>
-                            <span className="font-bold">{gpsTow || "-"}</span>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-md">
-                  <h3 className="font-medium mb-2 text-blue-700 dark:text-blue-400">GPS 时间说明:</h3>
-                  <p className="text-sm">
-                    GPS时间从1980年1月6日00:00:00 UTC开始计算。GPS周从0开始，每7天为一个GPS周。
-                    周内秒范围从0到604799，表示一周内的秒数。 GPS时间与UTC时间之间存在闰秒差异，目前差异为18秒。
-                  </p>
-                </div>
-              </CardContent>
-            </Card>
+          <TabsContent value="single" className="mt-0">
+            <SingleSystemConverter />
           </TabsContent>
 
-          <TabsContent value="bds">
-            <Card className="converter-card max-w-4xl mx-auto">
-              <CardHeader>
-                <CardTitle className="text-center text-2xl">北斗时间转换</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-6">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                  <div className="space-y-6 bg-white/50 dark:bg-gray-800/50 p-6 rounded-xl shadow-sm">
-                    <h3 className="font-semibold text-lg flex items-center gap-2 text-indigo-700 dark:text-indigo-400">
-                      <Clock className="h-5 w-5" />
-                      北斗周 → 日期时间
-                    </h3>
-                    <div className="space-y-4">
-                      <div className="space-y-2">
-                        <Label htmlFor="bds-week">北斗 周</Label>
-                        <Input
-                          id="bds-week"
-                          value={bdsWeek}
-                          onChange={(e) => setBdsWeek(e.target.value)}
-                          placeholder="例如: 900"
-                          className="bg-white dark:bg-gray-950"
-                        />
-                      </div>
-
-                      <div className="space-y-2">
-                        <Label htmlFor="bds-tow">北斗 周内秒</Label>
-                        <Input
-                          id="bds-tow"
-                          value={bdsTow}
-                          onChange={(e) => setBdsTow(e.target.value)}
-                          placeholder="例如: 172800 (周二开始)"
-                          className="bg-white dark:bg-gray-950"
-                        />
-                      </div>
-
-                      <Button onClick={handleBDSToDateTime} className="w-full">
-                        转换为日期时间
-                      </Button>
-                    </div>
-
-                    <div className="pt-4 border-t">
-                      <div className="space-y-2">
-                        <Label>转换结果</Label>
-                        <div className="flex flex-col gap-2">
-                          <div className="flex items-center gap-2 bg-indigo-50 dark:bg-indigo-900/20 p-3 rounded-md">
-                            <Calendar className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />
-                            <span>{bdsDate ? format(bdsDate, "yyyy-MM-dd", { locale: zhCN }) : "未选择日期"}</span>
-                          </div>
-                          <div className="flex items-center gap-2 bg-indigo-50 dark:bg-indigo-900/20 p-3 rounded-md">
-                            <Clock className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />
-                            <span>{bdsTime || "00:00:00"}</span>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="space-y-6 bg-white/50 dark:bg-gray-800/50 p-6 rounded-xl shadow-sm">
-                    <h3 className="font-semibold text-lg flex items-center gap-2 text-indigo-700 dark:text-indigo-400">
-                      <Calendar className="h-5 w-5" />
-                      日期时间 → 北斗周
-                    </h3>
-                    <div className="space-y-4">
-                      <div className="space-y-2">
-                        <Label>选择日期</Label>
-                        <Popover open={bdsDatePickerOpen} onOpenChange={setBdsDatePickerOpen}>
-                          <PopoverTrigger asChild>
-                            <Button
-                              variant={"outline"}
-                              className={cn(
-                                "w-full justify-start text-left font-normal bg-white dark:bg-gray-950",
-                                !bdsDate && "text-muted-foreground",
-                              )}
-                            >
-                              <Calendar className="mr-2 h-4 w-4" />
-                              {bdsDate ? format(bdsDate, "yyyy-MM-dd", { locale: zhCN }) : <span>选择日期</span>}
-                            </Button>
-                          </PopoverTrigger>
-                          <PopoverContent className="w-auto p-0" align="start">
-                            <div className="p-3 flex gap-2">
-                              <select
-                                value={bdsCalendarMonth.getFullYear()}
-                                onChange={(e) => handleBdsYearChange(Number.parseInt(e.target.value))}
-                                className="flex-1 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm"
-                              >
-                                {Array.from({ length: 2051 - 2000 }, (_, i) => 2000 + i).map((year) => (
-                                  <option key={year} value={year}>
-                                    {year}年
-                                  </option>
-                                ))}
-                              </select>
-
-                              <select
-                                value={bdsCalendarMonth.getMonth()}
-                                onChange={(e) => handleBdsMonthChange(Number.parseInt(e.target.value))}
-                                className="flex-1 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm"
-                              >
-                                {Array.from({ length: 12 }, (_, i) => i).map((month) => (
-                                  <option key={month} value={month}>
-                                    {month + 1}月
-                                  </option>
-                                ))}
-                              </select>
-                            </div>
-                            <CalendarComponent
-                              mode="single"
-                              selected={bdsDate}
-                              onSelect={handleBdsDateSelect}
-                              month={bdsCalendarMonth}
-                              onMonthChange={setBdsCalendarMonth}
-                              initialFocus
-                              locale={zhCN}
-                            />
-                          </PopoverContent>
-                        </Popover>
-                      </div>
-
-                      <div className="space-y-2">
-                        <Label>选择时间</Label>
-                        <TimePickerDemo value={bdsTime} onChange={handleBdsTimeChange} />
-                      </div>
-
-                      <Button onClick={handleDateTimeToBDS} className="w-full">
-                        转换为北斗周和周内秒
-                      </Button>
-                    </div>
-
-                    <div className="pt-4 border-t">
-                      <div className="space-y-2">
-                        <Label>转换结果</Label>
-                        <div className="flex flex-col gap-2">
-                          <div className="flex items-center gap-2 bg-indigo-50 dark:bg-indigo-900/20 p-3 rounded-md">
-                            <span className="font-medium">北斗周:</span>
-                            <span className="font-bold">{bdsWeek || "-"}</span>
-                          </div>
-                          <div className="flex items-center gap-2 bg-indigo-50 dark:bg-indigo-900/20 p-3 rounded-md">
-                            <span className="font-medium">周内秒:</span>
-                            <span className="font-bold">{bdsTow || "-"}</span>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="bg-indigo-50 dark:bg-indigo-900/20 p-4 rounded-md">
-                  <h3 className="font-medium mb-2 text-indigo-700 dark:text-indigo-400">北斗时间说明:</h3>
-                  <p className="text-sm">
-                    北斗时间从2006年1月1日00:00:00 UTC开始计算。北斗周从0开始，每7天为一个北斗周。
-                    周内秒范围从0到604799，表示一周内的秒数。 北斗时间与UTC时间之间存在闰秒差异，目前差异为4秒。
-                  </p>
-                </div>
-              </CardContent>
-            </Card>
+          <TabsContent value="cross" className="mt-0">
+            <CrossSystemConverter />
           </TabsContent>
         </Tabs>
+
+        {/* 快速导航 */}
+        <div className="mt-12 flex justify-center">
+          <Link href="/calendar">
+            <Button variant="outline" className="gap-2">
+              前往 GNSS 日历
+              <ChevronRight className="h-4 w-4" />
+            </Button>
+          </Link>
+        </div>
       </main>
+
+      <footer className="container mx-auto px-4 py-8 mt-12 border-t border-border">
+        <div className="text-center text-sm text-muted-foreground">
+          <p>© {new Date().getFullYear()} GNSS 工具集 | 支持 GPS / 北斗 / TAI / UTC 时间系统</p>
+        </div>
+      </footer>
     </div>
   )
 }

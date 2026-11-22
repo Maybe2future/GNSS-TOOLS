@@ -6,8 +6,8 @@
 
 从 [GitHub Releases](https://github.com/Maybe2future/GNSS-TOOLS/releases/latest) 下载对应附件即可，无需安装 Node.js：
 
-- Windows x64：下载以 `-Windows-x64.exe` 结尾的便携版并双击。未进行商业代码签名，可能出现 SmartScreen 提示。
-- Linux x64：下载以 `-Linux-x64.AppImage` 结尾的文件，允许执行后双击。缺少 FUSE 时可使用 `./文件名 --appimage-extract-and-run`。
+- Windows x64：下载 [`GNSS-Time-Tool-Windows-x64.exe`](https://github.com/Maybe2future/GNSS-TOOLS/releases/latest/download/GNSS-Time-Tool-Windows-x64.exe) 并双击。未进行商业代码签名，可能出现 SmartScreen 提示。
+- Linux x64：下载 [`GNSS-Time-Tool-Linux-x64.AppImage`](https://github.com/Maybe2future/GNSS-TOOLS/releases/latest/download/GNSS-Time-Tool-Linux-x64.AppImage)，允许执行后双击。缺少 FUSE 时可使用 `./GNSS-Time-Tool-Linux-x64.AppImage --appimage-extract-and-run`。
 - 应用通过 `127.0.0.1` 随机空闲端口提供内置静态资源，外部网站链接交给系统默认浏览器打开；关闭应用窗口即停止本地服务。
 
 ### 自行打包

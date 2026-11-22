@@ -1,6 +1,6 @@
 {
   "name": "gnss-time-tool",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "description": "GNSS 时间转换、GNSS 日历、SP3 精度分析与广播星历转 SP3 桌面及网页工具",
   "author": "Maybe2future",

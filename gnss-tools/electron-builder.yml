@@ -13,7 +13,7 @@ files:
   - "!node_modules/**/*"
 win:
   icon: public/icons/app.ico
-  artifactName: GNSS-Time-Tool-${version}-Windows-x64.exe
+  artifactName: GNSS-Time-Tool-Windows-x64.exe
   target:
     - target: portable
       arch:
@@ -22,7 +22,7 @@ linux:
   icon: public/icons/icon-512.png
   executableName: gnss-time-tool
   category: Utility
-  artifactName: GNSS-Time-Tool-${version}-Linux-x64.AppImage
+  artifactName: GNSS-Time-Tool-Linux-x64.AppImage
   target:
     - target: AppImage
       arch:

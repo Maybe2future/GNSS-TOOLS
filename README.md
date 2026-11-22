@@ -12,14 +12,15 @@
 
 前往 [GitHub Releases 最新版本](https://github.com/Maybe2future/GNSS-TOOLS/releases/latest)，根据系统下载对应附件：
 
-| 平台 | 附件后缀 | 使用方法 |
+| 平台 | 固定下载地址 | 使用方法 |
 | --- | --- | --- |
-| Windows x64 | `-Windows-x64.exe` | 下载后双击运行，无需安装 Node.js 或其他运行环境 |
-| Linux x64 | `-Linux-x64.AppImage` | 在文件属性中允许“作为程序执行”，或在终端执行 `chmod +x 文件名`，然后双击运行 |
+| Windows x64 | [GNSS-Time-Tool-Windows-x64.exe](https://github.com/Maybe2future/GNSS-TOOLS/releases/latest/download/GNSS-Time-Tool-Windows-x64.exe) | 下载后双击运行，无需安装 Node.js 或其他运行环境 |
+| Linux x64 | [GNSS-Time-Tool-Linux-x64.AppImage](https://github.com/Maybe2future/GNSS-TOOLS/releases/latest/download/GNSS-Time-Tool-Linux-x64.AppImage) | 在文件属性中允许“作为程序执行”，或在终端执行 `chmod +x 文件名`，然后双击运行 |
 
+- 上述固定地址始终指向最新 Release，后续发版无需修改网页或 README。
 - 桌面版已内置全部网页和 Electron 运行环境，离线即可使用，关闭窗口即退出应用。
 - Windows 版本未进行商业代码签名，可能出现 SmartScreen 提示；请只从本项目 Releases 下载。
-- 部分 Linux 系统需要 AppImage/FUSE 支持；缺少 FUSE 时可在终端使用 `./文件名 --appimage-extract-and-run`，仍然无需安装。
+- 部分 Linux 系统需要 AppImage/FUSE 支持；缺少 FUSE 时可在终端使用 `./GNSS-Time-Tool-Linux-x64.AppImage --appimage-extract-and-run`，仍然无需安装。
 
 ## 功能
 
@@ -59,4 +60,4 @@ pnpm desktop:dist
 
 本项目为个人工作需要所开发，可根据需要进行二次开发和部署。
 
-作者邮箱：18765541687@163.com
+问题反馈与建议请通过 [GitHub Issues](https://github.com/Maybe2future/GNSS-TOOLS/issues) 提交。

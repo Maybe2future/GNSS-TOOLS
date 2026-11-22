@@ -165,7 +165,7 @@ export default function Home() {
                 查看 GNSS 日历
               </Link>
               <a
-                href="https://github.com/Maybe2future/GNSS-TOOLS/releases/download/v0.2.0/GNSS-Time-Tool-0.2.0-Windows-x64.exe"
+                href="https://github.com/Maybe2future/GNSS-TOOLS/releases/latest/download/GNSS-Time-Tool-Windows-x64.exe"
                 target="_blank"
                 rel="noopener noreferrer"
                 aria-label="下载 Windows x64 免安装版"
@@ -175,7 +175,7 @@ export default function Home() {
                 Windows 免安装版
               </a>
               <a
-                href="https://github.com/Maybe2future/GNSS-TOOLS/releases/download/v0.2.0/GNSS-Time-Tool-0.2.0-Linux-x64.AppImage"
+                href="https://github.com/Maybe2future/GNSS-TOOLS/releases/latest/download/GNSS-Time-Tool-Linux-x64.AppImage"
                 target="_blank"
                 rel="noopener noreferrer"
                 aria-label="下载 Linux x64 免安装版"
